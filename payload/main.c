@@ -2019,7 +2019,7 @@ pull_worker(void *arg)
 				*q = '_';
 	}
 	snprintf(g_pull_name, sizeof(g_pull_name), "%s", base);
-	g_pull_active = 1;
+	/* g_pull_active was claimed by the handler before we existed */
 	g_pull_cancel = 0; /* fresh job clears any earlier cancel */
 	__sync_fetch_and_add(&g_active_installs, 1);
   	rc = pull_download(job->url, job->local, job->resume);
@@ -2645,11 +2645,19 @@ handle_client(int fd)
 		    strncmp(url, "http://", 7) != 0 ||
 		    jail_path(rpath, local, sizeof(local)) != 0) {
 			send_text(fd, "error:bad url/path");
+		} else if (g_pull_active) {
+			/* one copy at a time: two concurrent pulls would fight over
+			 * the shared progress state and corrupt the destination
+			 * (the claim below is race-free — handle_client is the only
+			 * reader, and it runs on the single server thread) */
+			send_text(fd, "error:copy already running");
 		} else {
+			g_pull_active = 1;
 			pull_job_t *job = malloc(sizeof(*job));
 			pthread_t tid;
 			json_string(body, "mode", mode, sizeof(mode));
 			if (!job) {
+				g_pull_active = 0;
 				send_text(fd, "error:out of memory");
 			} else {
 				snprintf(job->url, sizeof(job->url),
@@ -2660,6 +2668,7 @@ handle_client(int fd)
 				if (pthread_create(&tid, NULL, pull_worker,
 				    job) != 0) {
 					free(job);
+					g_pull_active = 0;
 					send_text(fd, "error:worker failed");
 				} else {
 					pthread_detach(tid);

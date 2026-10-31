@@ -34,15 +34,17 @@ way.
 
 ## Getting the receiver
 
-Easiest: grab a ready-made ELF from GitHub. Go to **Actions → build → the
-latest run → Artifacts** and download `pkg-receiver`, which contains:
+Easiest: grab a ready-made ELF from the [Releases][releases] page. Each
+release carries:
 
 | File | What it is |
 | --- | --- |
 | `pkg-receiver.elf` | The receiver. Install and copy features enabled. |
 | `pkg-receiver-testonly.elf` | Discovery-only build: beacons and status probes work, but every install or file-write request is refused. Handy for testing network discovery without risk. |
 
-Or build it yourself — see [For developers](#for-developers).
+Builds in between releases are available from CI: **Actions → build → the
+latest run → Artifacts**. Or build it yourself — see
+[For developers](#for-developers).
 
 ## Running it
 
@@ -233,3 +235,4 @@ MIT-licensed. Its notice is retained for the derived code:
 > SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 [pkg-sender]: https://github.com/Loopayeh/pkg-sender
+[releases]: https://github.com/AldySan/ps5-package-receiver-elf/releases

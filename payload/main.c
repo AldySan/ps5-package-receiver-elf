@@ -1317,7 +1317,7 @@ static const char UI_HTML[] =
 "for(var i=0;i<1800;i++){await new Promise(function(rs){setTimeout(rs,2000);});"
 "try{var s=await fetch('/api/status');var j=await s.json();"
 "if(!j.pull){copHide();"
-"if(copCancelled){msg.className='';msg.textContent='Copy cancelled: '+file+' (partial stays for resume).';}"
+"if(copCancelled){msg.className='';msg.textContent='Copy cancelled: '+file+'.';}"
 "else{msg.className='ok';msg.textContent='Done: '+file+' — check the console.';loadSpace();}"
 "return;}"
 "var now=Date.now(),spd='';"
@@ -1801,7 +1801,8 @@ pull_download(const char *url, const char *local, int resume)
 	if (want >= 0 && stat(local, &st) == 0 &&
 	    (long long)st.st_size == want)
 		return 1; /* already there */
-	/* resume point: existing partial bytes are kept, segments cover the rest */
+	/* resume point: a valid sequential prefix is kept and finished by the
+	 * single-stream path below (parallel ranges are never resumed) */
 	have = (want >= 0 && stat(local, &st) == 0) ? (long long)st.st_size : -1;
 	base = (resume && want > 0 && have > 0 && have < want) ? have : 0;
 	/* /data/homebrew may not exist yet — create the parent chain first */
@@ -1818,28 +1819,36 @@ pull_download(const char *url, const char *local, int resume)
 	}
 	g_pull_want = want;
 	g_pull_got = base;
-	if (want >= 2 * 1024 * 1024) {
+	/* fast path only for fresh downloads: parallel writers scatter their
+	 * ranges, so a partial they leave behind is not a valid prefix and
+	 * must never be resumed (and never look complete). */
+	if (want >= 2 * 1024 * 1024 && base == 0 &&
+	    strlen(local) + 6 < PATH_MAX_V) {
 		/* ── fast path: PULL_SEGS parallel Range streams ──
+		 * Range streams write to <local>.part; rename() publishes the
+		 * file only after every segment finished, so a failed, cancelled
+		 * or power-cut copy never leaves a full-size holey file behind.
 		 * heap, not stack: worker threads have small stacks. */
+		char part[PATH_MAX_V];
 		pull_seg_t *segs = malloc(sizeof(*segs) * PULL_SEGS);
 		pthread_t *tids = malloc(sizeof(*tids) * PULL_SEGS);
-		long long part = (want - base) / PULL_SEGS;
+		long long seglen = want / PULL_SEGS;
 		int i, alive = 0, fail = 0, rc = -1;
 
+		snprintf(part, sizeof(part), "%s.part", local);
 		if (!segs || !tids) {
 			free(segs);
 			free(tids);
 			return -1;
 		}
 
-		out = open(local, O_WRONLY | O_CREAT | (base ? 0 : O_TRUNC), 0644);
+		out = open(part, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (out < 0) {
 			free(segs);
 			free(tids);
 			return -1;
 		}
-		/* pre-size so every segment has its range on disk
-		 * (keeps resumed bytes: extend-only, never shrinks data) */
+		/* pre-size so every segment has its range on disk */
 		if (ftruncate(out, (off_t)want) != 0) {
 			close(out);
 			free(segs);
@@ -1848,13 +1857,13 @@ pull_download(const char *url, const char *local, int resume)
 		}
 		close(out);
 		for (i = 0; i < PULL_SEGS; i++) {
-			long long s0 = base + part * i;
-			long long s1 = (i == PULL_SEGS - 1) ? want : base + part * (i + 1);
+			long long s0 = seglen * i;
+			long long s1 = (i == PULL_SEGS - 1) ? want : seglen * (i + 1);
 
 			snprintf(segs[i].host, sizeof(segs[i].host), "%s", host);
 			snprintf(segs[i].portstr, sizeof(segs[i].portstr), "%s", portstr);
 			snprintf(segs[i].get, sizeof(segs[i].get), "%s", get);
-			snprintf(segs[i].local, sizeof(segs[i].local), "%s", local);
+			snprintf(segs[i].local, sizeof(segs[i].local), "%s", part);
 			segs[i].start = s0;
 			segs[i].len = s1 - s0;
 			if (segs[i].len <= 0) {
@@ -1873,6 +1882,7 @@ pull_download(const char *url, const char *local, int resume)
 				pthread_join(tids[i], NULL);
 			free(segs);
 			free(tids);
+			unlink(part);
 			return -1;
 		}
 		for (i = 0; i < alive; i++)
@@ -1883,10 +1893,20 @@ pull_download(const char *url, const char *local, int resume)
 				rc = -1;
 		free(segs);
 		free(tids);
-		if (rc != 0)
+		if (rc != 0) {
+			/* a range failed or was cancelled: the scattered partial is
+			 * worthless — drop it, never resume it */
+			unlink(part);
 			return -1;
-		if (stat(local, &st) != 0 || (long long)st.st_size != want)
+		}
+		if (stat(part, &st) != 0 || (long long)st.st_size != want) {
+			unlink(part);
 			return -1;
+		}
+		if (rename(part, local) != 0) {
+			unlink(part);
+			return -1;
+		}
 		return 0;
 	}
 	/* ── small/unknown size: classic single stream ── */

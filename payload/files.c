@@ -9,8 +9,6 @@
 
 #include "files.h"
 
-#define JAIL_PREFIX "/data/homebrew"
-
 /* ── /data/homebrew file receiver ──────────────────────────────────── */
 #define JAIL_PREFIX "/data/homebrew"
 

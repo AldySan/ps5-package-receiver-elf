@@ -278,6 +278,10 @@ h_fs_list(int fd, const char *path, char *body, long body_len)
 			    i ? "," : "", nm,
 			    ents[i].is_dir ? "true" : "false",
 			    ents[i].size);
+			/* snprintf reports the untruncated length; memcpy must
+			 * never copy more than row actually holds */
+			if (need < 0 || (size_t)need >= sizeof(row))
+				need = (int)sizeof(row) - 1;
 			if (joff + (size_t)need + 32 >= jlen) {
 				truncated = 1;
 				break;

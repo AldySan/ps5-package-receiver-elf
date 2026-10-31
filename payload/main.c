@@ -2008,15 +2008,17 @@ pull_worker(void *arg)
 	int rc;
 
 	snprintf(base, sizeof(base), "%s", b ? b + 1 : job->local);
-	snprintf(g_pull_name, sizeof(g_pull_name), "%s", base);
-	/* keep /api/status JSON valid: no quotes/backslashes in the name */
+	/* keep /api/status JSON valid: no quotes/backslashes in the name.
+	 * Sanitize before publishing so a concurrent poll never sees a
+	 * half-published name with quotes still in it. */
 	{
 		char *q;
 
-		for (q = g_pull_name; *q; q++)
+		for (q = base; *q; q++)
 			if (*q == '"' || *q == '\\')
 				*q = '_';
 	}
+	snprintf(g_pull_name, sizeof(g_pull_name), "%s", base);
 	g_pull_active = 1;
 	g_pull_cancel = 0; /* fresh job clears any earlier cancel */
 	__sync_fetch_and_add(&g_active_installs, 1);
@@ -2215,7 +2217,7 @@ handle_client(int fd)
 		send_json(fd, out);
 	} else if (!strcmp(method, "GET") &&
 	           !strncmp(path, "/api/status", 11)) {
-		char out[256];
+		char out[512];
 
 		snprintf(out, sizeof(out), "{\"busy\":%s,\"active\":%d,"
 		    "\"pull\":%s,\"pullName\":\"%s\","

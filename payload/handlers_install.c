@@ -34,15 +34,25 @@ do_install_reply_text(int fd, const char *url, const char *name,
 void
 h_install_get(int fd, const char *path, char *body, long body_len)
 {
-	char url[URL_MAX], gname[256], gicon[512];
+	char url[URL_MAX], url_fixed[URL_MAX], gname[256], gicon[512],
+	    icon_fixed[512];
 
 	if (query_url(path, url, sizeof(url))) {
 		gname[0] = '\0';
 		gicon[0] = '\0';
 		query_param(path, "name", gname, sizeof(gname));
 		query_param(path, "icon", gicon, sizeof(gicon));
-		do_install_reply_text(fd, url, gname[0] ? gname : NULL,
-		                      gicon[0] ? gicon : NULL);
+		/* the query args arrive percent-decoded, so a url or icon with
+		 * a space in it reaches the console installer raw and breaks
+		 * it — sanitize exactly like the POST path (issue #6) */
+		if (gicon[0])
+			url_encode_spaces(gicon, icon_fixed,
+			    sizeof(icon_fixed));
+		else
+			icon_fixed[0] = '\0';
+		url_encode_spaces(url, url_fixed, sizeof(url_fixed));
+		do_install_reply_text(fd, url_fixed, gname[0] ? gname : NULL,
+		                      icon_fixed[0] ? icon_fixed : NULL);
 	} else {
 		send_text(fd, "error:missing url");
 	}

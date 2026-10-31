@@ -489,8 +489,8 @@ pull_worker(void *arg)
 				*q = '_';
 	}
 	snprintf(g_pull_name, sizeof(g_pull_name), "%s", base);
-	/* g_pull_active was claimed by pull_start before we existed */
-	g_pull_cancel = 0; /* fresh job clears any earlier cancel */
+	/* g_pull_active was claimed by pull_start before we existed,
+	 * and so was the cancel-flag reset (see pull_start) */
 	__sync_fetch_and_add(&g_active_installs, 1);
   	rc = pull_download(job->url, job->local, job->resume);
 	__sync_fetch_and_sub(&g_active_installs, 1);
@@ -522,6 +522,12 @@ pull_start(const char *url, const char *local, int resume)
 
 	if (g_pull_active)
 		return 1;
+	/* reset any stale cancel from the previous job HERE, on the
+	 * server thread, before the worker exists: requests are
+	 * serialized by the single-threaded accept loop, so a cancel
+	 * that arrives after this reply can no longer be swallowed by
+	 * the worker resetting the flag itself */
+	g_pull_cancel = 0;
 	g_pull_active = 1;
 	job = malloc(sizeof(*job));
 	if (!job) {

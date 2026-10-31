@@ -15,10 +15,10 @@ int mkdir_p(const char *path);
 #define FS_MAX_ENTRIES 2000
 
 typedef struct fs_entry {
-{T}char name[256];
-{T}int is_dir;
-{T}long long size;
-}} fs_entry_t;
+	char name[256];
+	int is_dir;
+	long long size;
+} fs_entry_t;
 
 int fs_entry_cmp(const void *a, const void *b);
 int fs_jail(const char *in, char *out, size_t sz);

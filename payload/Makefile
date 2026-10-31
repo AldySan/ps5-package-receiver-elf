@@ -6,7 +6,8 @@ endif
 
 ELF := pkg-receiver.elf
 SRCS := main.c notify.c discovery.c installer.c http.c files.c \
-        webui.c pull.c server.c
+        webui.c pull.c server.c handlers_core.c handlers_install.c \
+        handlers_files.c
 
 CFLAGS := -Os -Wall -Werror
 

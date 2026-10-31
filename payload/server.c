@@ -262,7 +262,7 @@ handle_client(int fd)
 	           !strncmp(path, "/api/pc", 7)) {
 		char out[128];
 
-		snprintf(out, sizeof(out), "{\"pc\":\"%s\",\"age\":%ld}}",
+		snprintf(out, sizeof(out), "{\"pc\":\"%s\",\"age\":%ld}",
 		    pc_addr(), pc_age());
 		send_json(fd, out);
 

@@ -213,6 +213,14 @@ handle_client(int fd)
                         buffered += n;
                         missing -= n;
                 }
+                if (buffered < body_len) {
+                        /* short body: the missing tail would be stale
+                         * bytes from whatever request last used this
+                         * shared buffer — refuse instead of serving it */
+                        send_text(fd, "Loopayeh: short body");
+                        close(fd);
+                        return;
+                }
                 if ((size_t)(body - buf) + (size_t)body_len >=
                     HDR_MAX + BODY_MAX)
                         body_len = buffered;

@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,14 +87,18 @@ send_png(int fd, const unsigned char *data, size_t len)
         send_all(fd, hdr, (size_t)hlen);
         send_all(fd, (const char *)data, len);
 }
-/* %XX -> byte, + -> space. dst must fit URL_MAX. */
+/* %XX -> byte, + -> space. dst must fit URL_MAX. A '%' that is not
+ * followed by two hex digits is copied through as-is: strtol() would
+ * turn "%ZZ" into a NUL byte and silently truncate the result. */
 void
 url_decode(const char *src, char *dst, size_t dst_sz)
 {
         size_t o = 0;
 
         while (*src && o + 1 < dst_sz) {
-                if (*src == '%' && src[1] && src[2]) {
+                if (*src == '%' &&
+                    isxdigit((unsigned char)src[1]) &&
+                    isxdigit((unsigned char)src[2])) {
                         char hex[3] = { src[1], src[2], 0 };
                         dst[o++] = (char)strtol(hex, NULL, 16);
                         src += 3;
@@ -314,7 +319,10 @@ content_length(const char *hdr)
 {
         const char *p = strcasestr(hdr, "content-length:");
 
-        if (!p)
+        /* must be the field name itself, not a suffix such as
+         * "X-Content-Length:" — the match has to sit at the very
+         * start of a line */
+        if (!p || (p != hdr && p[-1] != '\n'))
                 return 0;
         return strtol(p + 15, NULL, 10);
 }

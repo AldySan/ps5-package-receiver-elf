@@ -316,21 +316,6 @@ __asm__(
 extern const unsigned char launcher_icon[];
 extern const size_t launcher_icon_size;
 
-__asm__(
-".section .rodata\n"
-".global sender_logo\n"
-".global sender_logo_end\n"
-".global sender_logo_size\n"
-".align 16\n"
-"sender_logo:\n"
-".incbin \"logo.png\"\n"
-"sender_logo_end:\n"
-"sender_logo_size:\n"
-".quad sender_logo_end - sender_logo\n"
-".previous\n");
-extern const unsigned char sender_logo[];
-extern const size_t sender_logo_size;
-
 typedef int (*titledir_fn)(const char *, const char *, void *);
 
 static int
@@ -406,6 +391,22 @@ launcher_install_if_needed(void)
 /* TEST_ONLY has no launcher block above, but still reports a build tag */
 #define RECEIVER_BUILD "20260920-12-TEST"
 #endif
+
+/* the /logo.png handler is served in every build, including TEST_ONLY */
+__asm__(
+".section .rodata\n"
+".global sender_logo\n"
+".global sender_logo_end\n"
+".global sender_logo_size\n"
+".align 16\n"
+"sender_logo:\n"
+".incbin \"logo.png\"\n"
+"sender_logo_end:\n"
+"sender_logo_size:\n"
+".quad sender_logo_end - sender_logo\n"
+".previous\n");
+extern const unsigned char sender_logo[];
+extern const size_t sender_logo_size;
 
 /* install runs on a detached worker so a slow/hanging SCE call can
  * never wedge the single-threaded HTTP loop. */

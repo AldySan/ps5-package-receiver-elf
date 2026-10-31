@@ -190,6 +190,14 @@ payload:
 - The giant request-routing `if/else` chain became a route table with one
   handler per endpoint, split by theme — same behavior, verified against
   the old chain for 340 method+path combinations.
+- `GET /install` (the WebUI's install buttons) sanitizes spaces in the
+  URL and icon the same way the JSON route does.
+- Copies from servers without byte-range support (e.g.
+  `python -m http.server`) fall back to a single stream instead of
+  failing every parallel segment.
+- A copy name containing control characters can no longer break the
+  `/api/status` reply, and a pause pressed just as a copy finished can
+  no longer start the next one frozen.
 
 ### Branching
 

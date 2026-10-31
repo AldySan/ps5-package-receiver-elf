@@ -87,21 +87,33 @@ pull_headers(int s, char *hs, size_t hs_sz)
 	char c;
 	size_t hl = 0;
 	ssize_t n = -1;
+	int term = 0;
 
 	for (;;) {
 		n = recv(s, &c, 1, 0);
 		if (n <= 0)
 			break;
 		if (hl + 1 >= hs_sz)
-			break;
+			break; /* headers bigger than the buffer */
 		hs[hl++] = c;
 		hs[hl] = '\0';
-		if (hl >= 4 && !strcmp(hs + hl - 4, "\r\n\r\n"))
+		if (hl >= 4 && !strcmp(hs + hl - 4, "\r\n\r\n")) {
+			term = 1;
 			break;
+		}
 	}
-	if (n <= 0 || hl < 12 || strncmp(hs, "HTTP/", 5) != 0)
+	/* without the terminator we are mid-headers: the bytes after
+	 * them are NOT body bytes, so never report success */
+	if (!term || hl < 12 || strncmp(hs, "HTTP/", 5) != 0)
 		return 0;
 	return hs[9] == '2';
+}
+
+/* three-digit status code of a complete header block */
+static int
+http_status(const char *hs)
+{
+	return (hs[9] - '0') * 100 + (hs[10] - '0') * 10 + (hs[11] - '0');
 }
 
 /* Content-Length value in a header block, or -1 */
@@ -158,7 +170,10 @@ pull_seg_worker(void *arg)
 		close(s);
 		return NULL;
 	}
-	if (!pull_headers(s, hs, sizeof(hs))) {
+	/* a 200 here means the server ignored our Range and would send
+	 * the whole file from byte 0 — writing it at this segment's
+	 * offset would corrupt the copy, so insist on 206 */
+	if (!pull_headers(s, hs, sizeof(hs)) || http_status(hs) != 206) {
 		close(s);
 		return NULL;
 	}
@@ -389,7 +404,11 @@ pull_download(const char *url, const char *local, int resume)
 	{
 		char hs[4096];
 
-		if (!pull_headers(s, hs, sizeof(hs))) {
+		if (!pull_headers(s, hs, sizeof(hs)) ||
+		    (base > 0 && http_status(hs) != 206)) {
+			/* non-206 on a resume means the server ignored the
+			 * Range: appending the full body at `base` would
+			 * corrupt the file, so fail the copy instead */
 			close(s);
 			return -1;
 		}

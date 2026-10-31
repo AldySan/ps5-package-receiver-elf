@@ -2044,17 +2044,15 @@ pull_worker(void *arg)
 static void
 handle_client(int fd)
 {
-	char *buf = malloc(HDR_MAX + BODY_MAX + 1);
+	/* requests are handled strictly one at a time by the accept loop,
+	 * so one shared buffer serves every connection — no per-request
+	 * ~8 MB alloc/free churn for what is usually a ~100-byte poll */
+	static char buf[HDR_MAX + BODY_MAX + 1];
 	char method[16], path[URL_MAX + 64];
 	long hdr_len, body_len;
 	char *body;
 	char url[URL_MAX];
 	struct timeval tv;
-
-	if (!buf) {
-		close(fd);
-		return;
-	}
 
 	/* a silent connection must never wedge the single-threaded loop */
 	tv.tv_sec = 10;
@@ -2064,13 +2062,11 @@ handle_client(int fd)
 
 	hdr_len = read_headers(fd, buf, HDR_MAX);
 	if (hdr_len < 0) {
-		free(buf);
 		close(fd);
 		return;
 	}
 
 	if (sscanf(buf, "%15s %2079s", method, path) != 2) {
-		free(buf);
 		close(fd);
 		return;
 	}
@@ -2089,7 +2085,6 @@ handle_client(int fd)
 		    !strncmp(path, "https://", 8)) {
 			strcpy(path, "/"); /* "http://host" with no path */
 		} else if (path[0] == '\0' || path[0] != '/') {
-			free(buf);
 			close(fd);
 			return;
 		}
@@ -2112,7 +2107,6 @@ handle_client(int fd)
 	body_len = content_length(buf);
 	if (body_len < 0 || body_len > BODY_MAX) {
 		send_text(fd, "Loopayeh: bad content length");
-		free(buf);
 		close(fd);
 		return;
 	}
@@ -2682,7 +2676,6 @@ handle_client(int fd)
 	}
 handled:
 
-	free(buf);
 	close(fd);
 }
 

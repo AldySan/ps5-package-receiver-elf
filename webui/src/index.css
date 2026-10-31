@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark-only dashboard; the palette matches the payload's embedded logo
+ * (#171717 page, #202020 cards, #4F8EF7 accent). Values under :root
+ * and .dark are identical on purpose — there is no light mode. */
+@layer base {
+  :root,
+  .dark {
+    --background: 0 0% 9%;          /* #171717 */
+    --foreground: 225 30% 95%;      /* #F1F3F8 */
+
+    --card: 0 0% 12.5%;             /* #202020 */
+    --card-foreground: 225 30% 95%;
+
+    --popover: 0 0% 12.5%;
+    --popover-foreground: 225 30% 95%;
+
+    --primary: 218 91% 64%;         /* #4F8EF7 */
+    --primary-foreground: 0 0% 9%;
+
+    --secondary: 0 0% 16.5%;        /* #2A2A2A */
+    --secondary-foreground: 225 30% 95%;
+
+    --muted: 0 0% 16.5%;
+    --muted-foreground: 222 13% 60%; /* #8B93A5 */
+
+    --accent: 0 0% 16.5%;
+    --accent-foreground: 225 30% 95%;
+
+    --destructive: 0 63% 68%;       /* #E17B7B */
+    --destructive-foreground: 0 0% 9%;
+
+    --success: 165 55% 45%;         /* #34B595 */
+    --warn: 36 73% 59%;             /* #E8A34C */
+
+    --border: 0 0% 18%;             /* #2E2E2E */
+    --input: 0 0% 16.5%;
+    --ring: 218 91% 64%;
+
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-size: 18px;
+  }
+}

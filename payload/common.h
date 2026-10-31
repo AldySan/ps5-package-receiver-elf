@@ -17,9 +17,9 @@
 
 /* bump on every behavior change; the page shows receiver vs page tags */
 #ifdef TEST_ONLY
-#define RECEIVER_BUILD "20260920-12-TEST"
+#define RECEIVER_BUILD "20261031-01-TEST"
 #else
-#define RECEIVER_BUILD "20260921-03"
+#define RECEIVER_BUILD "20261031-01"
 #endif
 
 /* File explorer (Files tab + /api/fs/...) is TEMPORARILY DISABLED.

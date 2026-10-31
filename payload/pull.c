@@ -550,12 +550,15 @@ pull_start(const char *url, const char *local, int resume)
 
 	if (g_pull_active)
 		return 1;
-	/* reset any stale cancel from the previous job HERE, on the
-	 * server thread, before the worker exists: requests are
+	/* reset any stale cancel or pause from the previous job HERE,
+	 * on the server thread, before the worker exists: requests are
 	 * serialized by the single-threaded accept loop, so a cancel
 	 * that arrives after this reply can no longer be swallowed by
-	 * the worker resetting the flag itself */
+	 * the worker resetting the flag itself. A pause that outlived
+	 * its job (pressed just as that copy finished) must not start
+	 * the next one frozen. */
 	g_pull_cancel = 0;
+	g_pull_paused = 0;
 	g_pull_active = 1;
 	job = malloc(sizeof(*job));
 	if (!job) {

@@ -71,7 +71,10 @@ PS4 packages install the same way; the console handles them natively.
 
 ## For developers
 
-The receiver is one C file and a Makefile. It provides:
+The receiver is a handful of small C modules in `payload/` (one per
+concern: discovery, HTTP plumbing, per-endpoint handlers, installer,
+file transfers) plus the `webui/` React app for the browser dashboard.
+It provides:
 
 - an HTTP server on TCP 12800 (WebUI + JSON API),
 - a UDP beacon on port 12801, announcing `PKGSENDER v1 <ip>` every 3 s so
@@ -101,6 +104,38 @@ make -C payload PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk TEST_ONLY=1
 
 Every pull request and push to `dev` is built by CI with the same
 toolchain.
+
+### The web page (webui/)
+
+The dashboard you open in the browser is a small React + TypeScript app
+(Vite, Tailwind CSS, shadcn/ui components and Motion for animation) in
+the `webui/` folder. The build turns it into **one self-contained HTML
+file**, `payload/webui.html`, which is embedded into the ELF as raw bytes
+— so the payload keeps serving the page with no extra files and no Node
+on the console.
+
+Changing the page:
+
+```sh
+cd webui
+npm install
+npm run dev                        # local dev server
+npm run build:embed                 # typecheck + build + refresh payload/webui.html
+git add -A ../payload ../webui      # commit the baked page together with src/
+```
+
+Two things to know:
+
+- The page shows `page <tag> • receiver <tag>` and warns when they differ.
+  Both come from `RECEIVER_BUILD` in `payload/common.h` — bump it when
+  the page's behavior changes, then re-run `build:embed`.
+- CI rebuilds the page and fails the pull request if the committed
+  `payload/webui.html` does not match your `src/` — you cannot forget to
+  re-bake it.
+
+Tailwind is pinned to v3 on purpose: the PS5 console browser is an older
+WebKit, and Tailwind v4's CSS needs a much newer one. Details are in
+`webui/README.md`.
 
 ### HTTP API
 
@@ -145,6 +180,14 @@ payload:
   corrupting both.
 - The ~8 MB request buffer is reused across connections instead of being
   allocated and freed for every poll.
+- `GET /api/pc` returned invalid JSON (a stray closing brace), which made
+  the browser page's automatic PC detection silently fail.
+- The temporarily-disabled Files-tab code compiled again: its header was
+  committed with template corruption and its implementation was missing
+  an include, both unnoticed because the feature is behind an off flag.
+- The giant request-routing `if/else` chain became a route table with one
+  handler per endpoint, split by theme — same behavior, verified against
+  the old chain for 340 method+path combinations.
 
 ### Branching
 

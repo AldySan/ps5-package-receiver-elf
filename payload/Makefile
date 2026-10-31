@@ -18,7 +18,9 @@ endif
 
 all: $(ELF)
 
-$(ELF): $(SRCS) $(wildcard *.h)
+# embedded assets (.incbin in webui.c / installer.c) are inputs too
+$(ELF): $(SRCS) $(wildcard *.h) webui.html logo.png icon0.png \
+        launcher_param.json
 	$(CC) $(CFLAGS) -o $@ $(SRCS) -lkernel_sys -lSceNet
 	$(STRIP) --strip-all $@
 

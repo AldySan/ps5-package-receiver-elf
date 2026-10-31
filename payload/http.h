@@ -6,7 +6,7 @@
 /* reply helpers */
 int  send_all(int fd, const char *buf, size_t len);
 void send_text(int fd, const char *body);
-void send_html(int fd, const char *body);
+void send_page(int fd, const char *body, size_t len);
 void send_json(int fd, const char *body);
 void send_png(int fd, const unsigned char *data, size_t len);
 

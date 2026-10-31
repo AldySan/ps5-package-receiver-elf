@@ -2789,6 +2789,11 @@ main(void)
 	int opt = 1;
 	struct sockaddr_in sa;
 
+	/* a browser or sender that hangs up mid-reply must not kill the
+	 * payload: writes to a closed socket raise SIGPIPE, whose default
+	 * action terminates the process */
+	signal(SIGPIPE, SIG_IGN);
+
 	syscall(SYS_thr_set_name, -1, RECEIVER_NAME);
 
 	/* replace any previous instance: re-inject needs no reboot */

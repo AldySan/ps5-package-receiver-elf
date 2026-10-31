@@ -1,0 +1,46 @@
+name: release
+
+# Every published release gets freshly built binaries attached by CI,
+# so nobody has to trust a binary that was not built from the tagged
+# source.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  attach-binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18
+
+      - name: Download PS5 payload SDK
+        run: |
+          curl -fsSL -o ps5-payload-sdk.zip \
+            https://github.com/ps5-payload-dev/sdk/releases/latest/download/ps5-payload-sdk.zip
+          sudo unzip -q -o ps5-payload-sdk.zip -d /opt
+
+      - name: Build receiver
+        run: |
+          make -C payload PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
+          mv payload/pkg-receiver.elf pkg-receiver.elf
+
+      - name: Build test-only receiver
+        run: |
+          make -C payload PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk TEST_ONLY=1
+          mv payload/pkg-receiver-testonly.elf pkg-receiver-testonly.elf
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            pkg-receiver.elf pkg-receiver-testonly.elf --clobber

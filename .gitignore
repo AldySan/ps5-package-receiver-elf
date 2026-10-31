@@ -1,0 +1,8 @@
+# Build artifacts
+*.elf
+*.o
+
+# Editor / OS noise
+*.bak
+*~
+.DS_Store

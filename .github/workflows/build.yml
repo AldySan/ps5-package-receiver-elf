@@ -1,0 +1,75 @@
+name: build
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 lld-18 llvm-18
+
+      - name: Download PS5 payload SDK
+        run: |
+          curl -fsSL -o ps5-payload-sdk.zip \
+            https://github.com/ps5-payload-dev/sdk/releases/latest/download/ps5-payload-sdk.zip
+          sudo unzip -q -o ps5-payload-sdk.zip -d /opt
+
+      - name: Build receiver
+        run: |
+          make -C payload PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
+          mv payload/pkg-receiver.elf pkg-receiver.elf
+
+      - name: Build test-only receiver
+        run: |
+          make -C payload PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk TEST_ONLY=1
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-receiver
+          path: |
+            pkg-receiver.elf
+            payload/pkg-receiver-testonly.elf
+          if-no-files-found: error
+
+  webui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: webui
+
+      # typechecks and rebuilds payload/webui.html from the committed
+      # sources; the diff step then fails if somebody edited src/ without
+      # re-baking the page the payload embeds
+      - name: Build and embed
+        run: npm run build:embed
+        working-directory: webui
+
+      - name: Check embedded page is up to date
+        run: |
+          if ! git diff --quiet -- payload/webui.html; then
+            echo "payload/webui.html is stale; run 'npm run build:embed' in webui/ and commit it"
+            git diff --stat -- payload/webui.html
+            exit 1
+          fi

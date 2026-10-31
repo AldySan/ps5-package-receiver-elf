@@ -67,6 +67,10 @@
 #define BODY_MAX   (8 * 1024 * 1024)
 #define URL_MAX    2048
 #define PATH_MAX_V 1024
+/* total time a single request may take to arrive; per-recv socket
+ * timeouts alone cannot stop a client that drips one byte at a time */
+#define HDR_DEADLINE_S 15
+#define BODY_DEADLINE_S 30
 
 /* File explorer (Files tab + /api/fs/...) is TEMPORARILY DISABLED.
  * Full code is kept below behind ENABLE_FILES_TAB and the last
@@ -1071,9 +1075,14 @@ static long
 read_headers(int fd, char *buf, size_t cap)
 {
 	size_t total = 0;
+	time_t deadline = time(NULL) + HDR_DEADLINE_S;
 
 	while (total + 1 < cap) {
-		ssize_t n = recv(fd, buf + total, cap - 1 - total, 0);
+		ssize_t n;
+
+		if (time(NULL) > deadline)
+			return -1;
+		n = recv(fd, buf + total, cap - 1 - total, 0);
 		if (n <= 0)
 			return -1;
 		total += (size_t)n;
@@ -2116,11 +2125,18 @@ handle_client(int fd)
 			body = end + 4;
 	}
 	if (body_len > 0) {
-		/* bytes after headers may already be in buf */
+		/* bytes after headers may already be in buf; a client may
+		 * not drip the body forever either */
 		long buffered = hdr_len - (body - buf);
 		long missing = body_len - buffered;
+		time_t deadline = time(NULL) + BODY_DEADLINE_S;
+
 		while (missing > 0) {
-			ssize_t n = recv(fd, body + buffered,
+			ssize_t n;
+
+			if (time(NULL) > deadline)
+				break;
+			n = recv(fd, body + buffered,
 			    (size_t)missing, 0);
 			if (n <= 0)
 				break;

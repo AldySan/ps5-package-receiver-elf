@@ -129,6 +129,22 @@ pull_clen(const char *hs)
 	return strtoll(p + 15, NULL, 10);
 }
 
+/* total size from a 206 header block's Content-Range (bytes x-y/N), or -1 */
+static long long
+pull_crange_total(const char *hs)
+{
+	const char *p = strstr(hs, "Content-Range:");
+
+	if (!p)
+		p = strstr(hs, "content-range:");
+	if (!p)
+		return -1;
+	p = strchr(p, '/');
+	if (!p)
+		return -1;
+	return strtoll(p + 1, NULL, 10);
+}
+
 static ssize_t
 pull_send(int s, const char *b, size_t n)
 {
@@ -240,7 +256,7 @@ pull_download(const char *url, const char *local, int resume)
 	const char *slash = strchr(p, '/');
 	char host[256], get[URL_MAX], req[URL_MAX + 256];
 	char portstr[16] = "80";
-	int s = -1, out = -1;
+	int s = -1, out = -1, ranges_ok = 0;
 	ssize_t n;
 	long long want = -1, got = 0, have = -1, base = 0;
 	struct stat st;
@@ -255,7 +271,11 @@ pull_download(const char *url, const char *local, int resume)
 		snprintf(portstr, sizeof(portstr), "%s", p + 1);
 		host[p - host] = '\0';
 	}
-	/* size discovery first (HEAD): big files go multi-segment below */
+	/* size discovery first: HEAD with a one-byte Range probe. A 206
+	 * proves the server honors Range — which the multi-segment path
+	 * below requires — and carries the real size in Content-Range. A
+	 * plain 200 means Range is ignored, so big files take the single
+	 * stream instead of failing all 16 segments. */
 	{
 		char hs[4096];
 
@@ -263,12 +283,18 @@ pull_download(const char *url, const char *local, int resume)
 		if (s < 0)
 			return -1;
 		snprintf(req, sizeof(req),
-		    "HEAD %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+		    "HEAD %s HTTP/1.0\r\nHost: %s\r\n"
+		    "Range: bytes=0-0\r\nConnection: close\r\n\r\n",
 		    get, host);
 		if (pull_send(s, req, strlen(req)) < 0 ||
 		    !pull_headers(s, hs, sizeof(hs)))
 			want = -1;
-		else
+		else if (http_status(hs) == 206) {
+			/* 206: Content-Length is just the probed byte; the
+			 * total size lives in Content-Range */
+			want = pull_crange_total(hs);
+			ranges_ok = 1;
+		} else
 			want = pull_clen(hs);
 		close(s);
 		s = -1;
@@ -297,7 +323,7 @@ pull_download(const char *url, const char *local, int resume)
 	/* fast path only for fresh downloads: parallel writers scatter their
 	 * ranges, so a partial they leave behind is not a valid prefix and
 	 * must never be resumed (and never look complete). */
-	if (want >= 2 * 1024 * 1024 && base == 0 &&
+	if (want >= 2 * 1024 * 1024 && base == 0 && ranges_ok &&
 	    strlen(local) + 6 < PATH_MAX_V) {
 		/* ── fast path: PULL_SEGS parallel Range streams ──
 		 * Range streams write to <local>.part; rename() publishes the

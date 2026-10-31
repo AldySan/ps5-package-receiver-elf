@@ -94,14 +94,22 @@ main(void)
 
 	syscall(SYS_thr_set_name, -1, RECEIVER_NAME);
 
-	/* replace any previous instance: re-inject needs no reboot */
-	for (;;) {
-		pid_t old = find_receiver_peer();
-		if (old <= 0)
-			break;
-		if (kill(old, SIGKILL) != 0)
-			break;
-		sleep(1);
+	/* replace any previous instance: re-inject needs no reboot.
+	 * Bounded: an unreaped zombie still matches the thread name and
+	 * kill() on it keeps succeeding, which would hang startup forever;
+	 * a busy port after that is reported by bind() below. */
+	{
+		int tries;
+
+		for (tries = 0; tries < 10; tries++) {
+			pid_t old = find_receiver_peer();
+
+			if (old <= 0)
+				break;
+			if (kill(old, SIGKILL) != 0)
+				break;
+			sleep(1);
+		}
 	}
 
 	srv = socket(AF_INET, SOCK_STREAM, 0);
@@ -155,8 +163,12 @@ main(void)
 
 	for (;;) {
 		cl = accept(srv, NULL, NULL);
-		if (cl < 0)
+		if (cl < 0) {
+			/* persistent failures (fd exhaustion, aborted
+			 * connections) must not turn into a busy loop */
+			usleep(100000);
 			continue;
+		}
 		handle_client(cl);
 	}
 

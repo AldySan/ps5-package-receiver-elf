@@ -504,14 +504,16 @@ pull_worker(void *arg)
 	int rc;
 
 	snprintf(base, sizeof(base), "%s", b ? b + 1 : job->local);
-	/* keep /api/status JSON valid: no quotes/backslashes in the name.
-	 * Sanitize before publishing so a concurrent poll never sees a
-	 * half-published name with quotes still in it. */
+	/* keep /api/status JSON valid: no quotes, backslashes or C0
+	 * control characters in the name. Sanitize before publishing so
+	 * a concurrent poll never sees a half-published name with quotes
+	 * still in it. */
 	{
 		char *q;
 
 		for (q = base; *q; q++)
-			if (*q == '"' || *q == '\\')
+			if (*q == '"' || *q == '\\' ||
+			    (unsigned char)*q < 0x20)
 				*q = '_';
 	}
 	snprintf(g_pull_name, sizeof(g_pull_name), "%s", base);

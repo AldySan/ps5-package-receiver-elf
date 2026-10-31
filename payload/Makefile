@@ -5,6 +5,8 @@ else
 endif
 
 ELF := pkg-receiver.elf
+SRCS := main.c notify.c discovery.c installer.c http.c files.c \
+        webui.c pull.c server.c
 
 CFLAGS := -Os -Wall -Werror
 
@@ -15,9 +17,9 @@ endif
 
 all: $(ELF)
 
-$(ELF): main.c
-	$(CC) $(CFLAGS) -o $@ $^ -lkernel_sys -lSceNet
+$(ELF): $(SRCS) $(wildcard *.h)
+	$(CC) $(CFLAGS) -o $@ $(SRCS) -lkernel_sys -lSceNet
 	$(STRIP) --strip-all $@
 
 clean:
-	rm -f $(ELF)
+	rm -f pkg-receiver.elf pkg-receiver-testonly.elf

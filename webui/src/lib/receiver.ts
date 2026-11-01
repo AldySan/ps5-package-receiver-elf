@@ -331,7 +331,7 @@ export function useReceiver() {
       setMsg({ text: "Copying " + file + "...", kind: "info" });
       try {
         const t = await api.pullStart(
-          "http://" + host + ":" + PC_PORT + "/pkg/" + g.id,
+          "http://" + host + ":" + PC_PORT + "/pkg/" + encodeURIComponent(g.id),
           "/data/homebrew/" + file,
           mode,
         );

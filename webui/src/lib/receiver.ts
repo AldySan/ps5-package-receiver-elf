@@ -74,8 +74,13 @@ export function useReceiver() {
   );
   const [pcRowOpen, setPcRowOpen] = useState(false);
 
-  /* the pull we started ourselves (external pulls show up too) */
-  const copyRef = useRef<{ file: string; cancelled: boolean } | null>(null);
+  /* the pull we started ourselves (external pulls show up too); want is
+   * the catalog size we expect at the end, 0 when unknown */
+  const copyRef = useRef<{
+    file: string;
+    cancelled: boolean;
+    want: number;
+  } | null>(null);
   /* speed is measured across consecutive status polls */
   const speedRef = useRef<{ got: number; t: number }>({ got: 0, t: 0 });
   const copyVisibleRef = useRef(false);
@@ -222,6 +227,15 @@ export function useReceiver() {
           return;
         }
       }
+      /* polling window over, install still running: say so instead of
+       * leaving "Installing..." on screen forever */
+      setMsg({
+        text:
+          "Still installing " +
+          g.title +
+          " — watch the console notifications.",
+        kind: "info",
+      });
     },
     [installOne, loadSpace],
   );
@@ -273,11 +287,18 @@ export function useReceiver() {
           kind: "info",
         });
         if (!(await installOne(list[i]))) {
-          setQueue({ done, total });
+          setQueue(null); /* installOne already showed why it failed */
           return;
         }
         if (!(await waitIdle())) {
-          setQueue({ done, total });
+          setQueue(null);
+          setMsg({
+            text:
+              "Install queue stopped — could not follow " +
+              list[i].title +
+              ". Check the console.",
+            kind: "err",
+          });
           return;
         }
         done += list[i].size || 0;
@@ -331,7 +352,7 @@ export function useReceiver() {
       setMsg({ text: "Copying " + file + "...", kind: "info" });
       try {
         const t = await api.pullStart(
-          "http://" + host + ":" + PC_PORT + "/pkg/" + g.id,
+          "http://" + host + ":" + PC_PORT + "/pkg/" + encodeURIComponent(g.id),
           "/data/homebrew/" + file,
           mode,
         );
@@ -339,7 +360,7 @@ export function useReceiver() {
           setMsg({ text: t, kind: "err" });
           return;
         }
-        copyRef.current = { file, cancelled: false };
+        copyRef.current = { file, cancelled: false, want: g.size || 0 };
         speedRef.current = { got: 0, t: Date.now() };
       } catch (ex) {
         setMsg({ text: "Error: " + ex, kind: "err" });
@@ -417,12 +438,36 @@ export function useReceiver() {
         setMsg({ text: "Copy cancelled: " + sess.file + ".", kind: "info" });
         toast.warning("Copy cancelled", { description: sess.file });
       } else if (sess) {
-        setMsg({
-          text: "Done: " + sess.file + " — check the console.",
-          kind: "ok",
-        });
-        toast.success("Copy finished", { description: sess.file });
-        loadSpace();
+        /* the console toasts the real outcome; when we know the expected
+         * size, check it so a failed copy never reads as success here */
+        void (async () => {
+          let ok = true;
+          if (sess.want > 0) {
+            try {
+              const st = await api.stat("/data/homebrew/" + sess.file);
+              ok = st.exists && st.size === sess.want;
+            } catch {
+              /* cannot verify — trust the console toast */
+            }
+          }
+          if (ok) {
+            setMsg({
+              text: "Done: " + sess.file + " — check the console.",
+              kind: "ok",
+            });
+            toast.success("Copy finished", { description: sess.file });
+          } else {
+            setMsg({
+              text:
+                "Copy did not finish: " +
+                sess.file +
+                " — check the console.",
+              kind: "err",
+            });
+            toast.error("Copy did not finish", { description: sess.file });
+          }
+          loadSpace();
+        })();
       } else {
         /* a copy somebody else started from elsewhere finished */
         setMsg({ text: "Copy finished — check the console.", kind: "ok" });

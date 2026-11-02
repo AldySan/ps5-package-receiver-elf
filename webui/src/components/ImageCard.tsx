@@ -45,6 +45,7 @@ export function ImageCard({ g, pc, onCopy }: ImageCardProps) {
         <img
           src={"http://" + pc + ":9898/icon/" + encodeURIComponent(g.id)}
           alt=""
+          loading="lazy"
           onError={() => setImgErr(true)}
           className={cn(
             "mb-2 aspect-square w-full bg-card object-cover",

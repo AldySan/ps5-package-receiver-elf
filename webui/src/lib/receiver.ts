@@ -206,10 +206,12 @@ export function useReceiver() {
         text: "ok: install queued for " + g.title + " — watch the console notifications.",
         kind: "info",
       });
+      let misses = 0;
       for (let i = 0; i < 300; i++) {
         await sleep(2000);
         try {
           const s = await api.status();
+          misses = 0;
           if (!s.busy) {
             setMsg({
               text: "Done: " + g.title + " — check the console.",
@@ -224,7 +226,16 @@ export function useReceiver() {
             kind: "info",
           });
         } catch {
-          return;
+          /* one dropped reply is normal mid-install; only stop watching
+           * after a few in a row, and say so instead of leaving
+           * "Installing..." on screen forever */
+          if (++misses >= 3) {
+            setMsg({
+              text: "Lost track of " + g.title + " — check the console.",
+              kind: "err",
+            });
+            return;
+          }
         }
       }
       /* polling window over, install still running: say so instead of
@@ -241,12 +252,14 @@ export function useReceiver() {
   );
 
   const waitBusy = useCallback(async (): Promise<boolean> => {
+    let misses = 0;
     for (let i = 0; i < 30; i++) {
       await sleep(1000);
       try {
         if ((await api.status()).busy) return true;
+        misses = 0;
       } catch {
-        return false;
+        if (++misses >= 3) return false;
       }
     }
     return false;
@@ -254,12 +267,16 @@ export function useReceiver() {
 
   const waitIdle = useCallback(async (): Promise<boolean> => {
     if (!(await waitBusy())) return false;
+    let misses = 0;
     for (let i = 0; i < 600; i++) {
       await sleep(2000);
       try {
         if (!(await api.status()).busy) return true;
+        misses = 0;
       } catch {
-        return false;
+        /* the console keeps installing even if one status reply is
+         * lost — bail out only after a few consecutive misses */
+        if (++misses >= 3) return false;
       }
     }
     return true;

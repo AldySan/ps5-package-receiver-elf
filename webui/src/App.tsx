@@ -47,8 +47,11 @@ export default function App() {
     const matchP = (g: CatalogEntry) => plat === "all" || g.platform === plat;
 
     const src = r.catalog.filter((g) => matchP(g) && matchQ(g));
-    const byTitle = (a: CatalogEntry, b: CatalogEntry) =>
-      a.title.toLowerCase() < b.title.toLowerCase() ? -1 : 1;
+    const byTitle = (a: CatalogEntry, b: CatalogEntry) => {
+      const x = a.title.toLowerCase();
+      const y = b.title.toLowerCase();
+      return x < y ? -1 : x > y ? 1 : 0;
+    };
 
     if (kind === "images")
       return src.filter((g) => g.format !== "pkg").sort(byTitle);
@@ -81,6 +84,18 @@ export default function App() {
     () => (openEntry ? famOf(r.catalog, openEntry) : []),
     [r.catalog, openEntry],
   );
+
+  /* add-on count per family key, computed once per catalog — the grid
+   * needs it for every card and re-renders on each 2-second status poll,
+   * so filtering the whole catalog per card (O(n^2)) is wasted work */
+  const addonCounts = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const g of r.catalog) {
+      if (g.format !== "pkg" || isBase(g) || !g.familyKey) continue;
+      m.set(g.familyKey, (m.get(g.familyKey) || 0) + 1);
+    }
+    return m;
+  }, [r.catalog]);
 
   /* install actions */
   const installOne = (g: CatalogEntry) => {
@@ -163,7 +178,7 @@ export default function App() {
                 key={g.id}
                 g={g}
                 pc={r.pc}
-                addons={famOf(r.catalog, g).length}
+                addons={addonCounts.get(g.familyKey || "") || 0}
                 onInstall={installOne}
                 onOpen={setOpenEntry}
               />

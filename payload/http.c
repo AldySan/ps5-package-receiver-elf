@@ -321,8 +321,11 @@ content_length(const char *hdr)
 
         /* must be the field name itself, not a suffix such as
          * "X-Content-Length:" — the match has to sit at the very
-         * start of a line */
-        if (!p || (p != hdr && p[-1] != '\n'))
+         * start of a line. Keep scanning: a decoy earlier in the
+         * headers must not hide the real field below it. */
+        while (p && p != hdr && p[-1] != '\n')
+                p = strcasestr(p + 1, "content-length:");
+        if (!p)
                 return 0;
         return strtol(p + 15, NULL, 10);
 }

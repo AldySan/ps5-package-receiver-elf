@@ -438,8 +438,28 @@ pull_download(const char *url, const char *local, int resume)
 			close(s);
 			return -1;
 		}
-		if (want < 0)
-			want = pull_clen(hs);
+		/* the response we are actually streaming is the
+		 * authority on the size: a HEAD probe that disagrees
+		 * (an error page, a changed file) must not fail a
+		 * fully copied file at the got != want check below */
+		if (base > 0) {
+			/* resume: a 206's Content-Range carries the
+			 * total; without it, offset + remaining bytes */
+			long long t = pull_crange_total(hs);
+
+			if (t < 0) {
+				t = pull_clen(hs);
+				if (t >= 0)
+					t += base;
+			}
+			if (t >= 0)
+				want = t;
+		} else {
+			long long t = pull_clen(hs);
+
+			if (t >= 0)
+				want = t;
+		}
 	}
 	out = open(local, O_WRONLY | O_CREAT | (base ? 0 : O_TRUNC), 0644);
 	if (out < 0) {

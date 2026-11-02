@@ -74,14 +74,12 @@ export function Header({
           ? pc + (pcSource === "auto" ? " (auto)" : " (manual)")
           : "?"}
       </Button>
-      {space && (
+      {space && space.free >= 0 && (
         <Badge
           variant="secondary"
           className="whitespace-nowrap rounded-full px-3 text-xs font-normal text-muted-foreground"
         >
-          {space.free >= 0
-            ? "Free " + fmt(space.free) + " / " + fmt(space.total)
-            : ""}
+          {"Free " + fmt(space.free) + " / " + fmt(space.total)}
         </Badge>
       )}
     </header>

@@ -114,7 +114,7 @@ main(void)
 
 	srv = socket(AF_INET, SOCK_STREAM, 0);
 	if (srv < 0) {
-		notify_user("Loopayeh: socket failed, exiting");
+		notify_user("PS5PKGREVELF: socket failed, exiting");
 		return 1;
 	}
 	setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -125,11 +125,11 @@ main(void)
 	sa.sin_port = htons(DPI_PORT);
 
 	if (bind(srv, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
-		notify_user("Loopayeh: port 12800 busy, exiting");
+		notify_user("PS5PKGREVELF: port 12800 busy, exiting");
 		return 1;
 	}
 	if (listen(srv, 8) < 0) {
-		notify_user("Loopayeh: listen failed, exiting");
+		notify_user("PS5PKGREVELF: listen failed, exiting");
 		return 1;
 	}
 
@@ -139,17 +139,17 @@ main(void)
 #ifdef TEST_ONLY
 		if (lan_ip()[0])
 			snprintf(hello, sizeof(hello),
-			    "Loopayeh: TEST %s:12800 (no installs)", lan_ip());
+			    "PS5PKGREVELF: TEST %s:12800 (no installs)", lan_ip());
 		else
 			snprintf(hello, sizeof(hello),
-			    "Loopayeh: TEST BUILD listening (no installs)");
+			    "PS5PKGREVELF: TEST BUILD listening (no installs)");
 #else
 		if (lan_ip()[0])
 			snprintf(hello, sizeof(hello),
-			    "Loopayeh: %s:12800 listening", lan_ip());
+			    "PS5PKGREVELF: %s:12800 listening", lan_ip());
 		else
 			snprintf(hello, sizeof(hello),
-			    "Loopayeh: listening on port 12800");
+			    "PS5PKGREVELF: listening on port 12800");
 #endif
 		notify_user(hello);
 	}

@@ -136,7 +136,7 @@ h_files_done(int fd, const char *path, char *body, long body_len)
 		    "{\"ok\":true,\"size\":%lld}", (long long)st.st_size);
 		send_json(fd, out);
 		snprintf(toast, sizeof(toast),
-		    "Loopayeh: received %s", base);
+		    "PS5PKGREVELF: received %s", base);
 		notify_user(toast);
 	}
 }

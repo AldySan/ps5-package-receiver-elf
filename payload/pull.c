@@ -354,6 +354,7 @@ pull_download(const char *url, const char *local, int resume)
 			close(out);
 			free(segs);
 			free(tids);
+			unlink(part); /* no stray .part on a full disk */
 			return -1;
 		}
 		close(out);

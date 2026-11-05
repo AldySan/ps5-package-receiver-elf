@@ -15,8 +15,8 @@
 /* HTTP request router: one connection at a time (see main.c).
  *
  * Endpoints (one handler each, see handlers_*.c):
- *   GET  /              - WebUI: Library tab (PC catalog + covers) and
- *                          Manual URL tab; installs a home-screen launcher
+ *   GET  /              - WebUI (game/image library from the PC catalog);
+ *                          installs a home-screen launcher
  *                          ("pkg remote installer", PKGS12800) on startup
  *   GET  /api            - probe (open, no action)
  *   GET  /api/status     - {"busy":true/false,"active":N} install state

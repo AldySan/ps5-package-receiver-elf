@@ -17,7 +17,7 @@
  * Endpoints (one handler each, see handlers_*.c):
  *   GET  /              - WebUI (game/image library from the PC catalog);
  *                          installs a home-screen launcher
- *                          ("pkg remote installer", PKGS12800) on startup
+ *                          ("PS5 PKG Receiver", PKGR12800) on startup
  *   GET  /api            - probe (open, no action)
  *   GET  /api/status     - {"busy":true/false,"active":N} install state
  *   GET  /api/pc         - {"pc":"1.2.3.4","age":N} last PC announce

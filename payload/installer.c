@@ -105,14 +105,14 @@ installer_init(void)
         pthread_mutex_unlock(&g_inst_lock);
         return rc;
 }
-/* ── Home-screen launcher ("pkg remote installer", Media category) ────
+/* ── Home-screen launcher ("PS5 PKG Receiver", Media category) ───────
  * Same idea as owendswang's ps5-web-file-manager (reimplemented here):
- * write /user/app/PKGS12800/sce_sys/{param.json,icon0.png} once, then
+ * write /user/app/PKGR12800/sce_sys/{param.json,icon0.png} once, then
  * register the web shortcut via AppInstUtil. Best-effort: if the symbol
  * is missing the receiver keeps serving without a launcher.
  * Skipped entirely in TEST_ONLY builds. */
 #ifndef TEST_ONLY
-#define LAUNCHER_TID "PKGS12800"
+#define LAUNCHER_TID "PKGR12800"
 
 __asm__(
 ".section .rodata\n"

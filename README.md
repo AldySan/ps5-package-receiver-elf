@@ -12,7 +12,7 @@ on:
   and install from there.
 
 Everything you start shows up as notifications on the console — queued,
-installing, done or failed — and a "pkg remote installer" shortcut can be
+installing, done or failed — and a "PS5 PKG Receiver" shortcut can be
 added to the home screen so you can reopen the page from the couch.
 
 The console also acts as a receiver for larger files (homebrew disc images

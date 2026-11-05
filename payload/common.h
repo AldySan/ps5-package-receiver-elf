@@ -17,9 +17,9 @@
 
 /* bump on every behavior change; the page shows receiver vs page tags */
 #ifdef TEST_ONLY
-#define RECEIVER_BUILD "v0.0.5-TEST"
+#define RECEIVER_BUILD "v0.0.6-TEST"
 #else
-#define RECEIVER_BUILD "v0.0.5"
+#define RECEIVER_BUILD "v0.0.6"
 #endif
 
 /* File explorer (Files tab + /api/fs/...) is TEMPORARILY DISABLED.

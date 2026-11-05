@@ -12,7 +12,7 @@ on:
   and install from there.
 
 Everything you start shows up as notifications on the console — queued,
-installing, done or failed — and a "pkg remote installer" shortcut can be
+installing, done or failed — and a "PS5 PKG Receiver" shortcut can be
 added to the home screen so you can reopen the page from the couch.
 
 The console also acts as a receiver for larger files (homebrew disc images
@@ -68,6 +68,15 @@ the same path a normal download would take. The package can come from:
   way), or
 - a file already on the console under `/data` (for example pushed there by
   the PC app, or on a USB stick you browsed with another tool).
+
+Some firmware refuses the first form — the install is declined with an
+error such as `0x80B22404`. When that happens the receiver retries on its
+own: it downloads the package to a temporary staging folder on the console
+and installs it from a loopback copy, cleaning the staging file up
+afterwards. If that download fails too, the notification says so, and the
+cause is almost always the console not being able to reach the PC — check
+the PC's firewall, VPN or proxy settings and that both machines are on the
+same network.
 
 PS4 packages install the same way; the console handles them natively.
 

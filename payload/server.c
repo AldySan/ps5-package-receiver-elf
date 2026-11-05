@@ -17,7 +17,7 @@
  * Endpoints (one handler each, see handlers_*.c):
  *   GET  /              - WebUI (game/image library from the PC catalog);
  *                          installs a home-screen launcher
- *                          ("pkg remote installer", PKGS12800) on startup
+ *                          ("PS5 PKG Receiver", PKGR12800) on startup
  *   GET  /api            - probe (open, no action)
  *   GET  /api/status     - {"busy":true/false,"active":N} install state
  *   GET  /api/pc         - {"pc":"1.2.3.4","age":N} last PC announce
@@ -172,7 +172,7 @@ handle_client(int fd)
         if (!strcmp(method, "POST") ||
             !strncmp(path, "/install", 8) ||
             !strncmp(path, "/api/files/", 11)) {
-                send_text(fd, "Loopayeh: test build, installs disabled");
+                send_text(fd, APP_TAG ": test build, installs disabled");
                 close(fd);
                 return;
         }
@@ -180,7 +180,7 @@ handle_client(int fd)
 
         body_len = content_length(buf);
         if (body_len < 0 || body_len > BODY_MAX) {
-                send_text(fd, "Loopayeh: bad content length");
+                send_text(fd, APP_TAG ": bad content length");
                 close(fd);
                 return;
         }
@@ -217,7 +217,7 @@ handle_client(int fd)
                         /* short body: the missing tail would be stale
                          * bytes from whatever request last used this
                          * shared buffer — refuse instead of serving it */
-                        send_text(fd, "Loopayeh: short body");
+                        send_text(fd, APP_TAG ": short body");
                         close(fd);
                         return;
                 }
@@ -234,7 +234,7 @@ handle_client(int fd)
         if (r)
                 r->fn(fd, path, body, body_len);
         else
-                send_text(fd, "Loopayeh: unknown endpoint");
+                send_text(fd, APP_TAG ": unknown endpoint");
 
         close(fd);
 }

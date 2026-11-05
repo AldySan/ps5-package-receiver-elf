@@ -136,8 +136,10 @@ export function useReceiver() {
     return "";
   }, []);
 
-  const loadCatalog = useCallback(async () => {
-    const target = await resolvePc();
+  const loadCatalog = useCallback(async (manual?: string) => {
+    /* an address the user just typed wins this load — a fresh auto
+     * announce from another PC must not silently override it */
+    const target = manual || (await resolvePc());
     if (!target) {
       setMsg({
         text: "No PC found — tick Publish library in PKG Sender, or type the PC address.",
@@ -166,8 +168,11 @@ export function useReceiver() {
     (value: string) => {
       const v = value.trim();
       setPc(v);
-      if (v) localStorage.setItem("pri_pc", v);
-      loadCatalog();
+      if (v) {
+        setPcSource("manual");
+        localStorage.setItem("pri_pc", v);
+      }
+      loadCatalog(v || undefined);
     },
     [loadCatalog],
   );

@@ -545,16 +545,16 @@ pull_worker(void *arg)
 	__sync_fetch_and_sub(&g_active_installs, 1);
 	g_pull_active = 0;
 	if (g_pull_cancel)
-		snprintf(toast, sizeof(toast), "Loopayeh: copy stopped %s", base);
+		snprintf(toast, sizeof(toast), APP_TAG ": copy stopped %s", base);
 	else if (rc == 0)
-		snprintf(toast, sizeof(toast), "Loopayeh: %s %s",
+		snprintf(toast, sizeof(toast), APP_TAG ": %s %s",
 		    job->resume ? "resumed" : "copied", base);
 	else if (rc == 1)
 		snprintf(toast, sizeof(toast),
-		    "Loopayeh: %s already there", base);
+		    APP_TAG ": %s already there", base);
 	else
 		snprintf(toast, sizeof(toast),
-		    "Loopayeh: copy failed %s", base);
+		    APP_TAG ": copy failed %s", base);
 	notify_user(toast);
 	free(job);
 	return NULL;

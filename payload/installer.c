@@ -112,7 +112,7 @@ installer_init(void)
         if (rc == 0)
                 g_inst_ready = 1;
         else
-                notify_user("PS5PKGREVELF: AppInstUtil init failed");
+                notify_user(APP_TAG ": AppInstUtil init failed");
         pthread_mutex_unlock(&g_inst_lock);
         return rc;
 }
@@ -200,28 +200,28 @@ launcher_install_if_needed(void)
         snprintf(sdir, sizeof(sdir), "%s/sce_sys", dir);
         if ((mkdir(dir, 0755) != 0 && errno != EEXIST) ||
             (mkdir(sdir, 0755) != 0 && errno != EEXIST)) {
-                notify_user("PS5PKGREVELF: launcher mkdir failed");
+                notify_user(APP_TAG ": launcher mkdir failed");
                 return;
         }
         snprintf(pj, sizeof(pj), "%s/param.json", sdir);
         snprintf(ip, sizeof(ip), "%s/icon0.png", sdir);
         if (write_file_once(pj, launcher_param, launcher_param_size) != 0 ||
             write_file_once(ip, launcher_icon, launcher_icon_size) != 0) {
-                notify_user("PS5PKGREVELF: launcher file write failed");
+                notify_user(APP_TAG ": launcher file write failed");
                 return;
         }
         p_titledir = (titledir_fn)dlsym(g_applib,
             "sceAppInstUtilAppInstallTitleDir");
         if (!p_titledir) {
-                notify_user("PS5PKGREVELF: launcher staged, registration N/A");
+                notify_user(APP_TAG ": launcher staged, registration N/A");
                 return;
         }
         rc = p_titledir(LAUNCHER_TID, "/user/app/", NULL);
         if (rc == 0)
-                notify_user("PS5PKGREVELF: home launcher installed");
+                notify_user(APP_TAG ": home launcher installed");
         else {
                 snprintf(toast, sizeof(toast),
-                    "PS5PKGREVELF: launcher register 0x%08X", (unsigned)rc);
+                    APP_TAG ": launcher register 0x%08X", (unsigned)rc);
                 notify_user(toast);
         }
 }
@@ -1029,7 +1029,7 @@ staged_install(const char *url, const char *content_name,
         mkdir_p(STAGE_DIR);
         snprintf(stage_path, sizeof(stage_path), "%s/%s", STAGE_DIR, fname);
         snprintf(toast, sizeof(toast),
-            "PS5PKGREVELF: LAN install refused, staging %s", content_name);
+            APP_TAG ": LAN install refused, staging %s", content_name);
         notify_user(toast);
 
         rc = stage_fetch(url, stage_path, &size);
@@ -1161,9 +1161,9 @@ install_worker(void *arg)
             job->icon[0] ? job->icon : NULL, name, sizeof(name));
 
         if (rc == 0)
-                snprintf(toast, sizeof(toast), "PS5PKGREVELF: installing %s", name);
+                snprintf(toast, sizeof(toast), APP_TAG ": installing %s", name);
         else
-                snprintf(toast, sizeof(toast), "PS5PKGREVELF: install failed %s",
+                snprintf(toast, sizeof(toast), APP_TAG ": install failed %s",
                     install_err_text(rc, err, sizeof(err)));
         notify_user(toast);
         __sync_fetch_and_sub(&g_active_installs, 1);

@@ -22,6 +22,11 @@
 #define RECEIVER_BUILD "v0.0.6"
 #endif
 
+/* every console notification and plain-text HTTP reply starts with the
+ * fork's name and the exact build, so a user report can name the version
+ * that was running */
+#define APP_TAG "PS5 PKG Receiver " RECEIVER_BUILD
+
 /* File explorer (Files tab + /api/fs/...) is TEMPORARILY DISABLED.
  * Full code is kept in files.c behind ENABLE_FILES_TAB.
  * To re-enable: #define ENABLE_FILES_TAB 1 */

@@ -172,7 +172,7 @@ handle_client(int fd)
         if (!strcmp(method, "POST") ||
             !strncmp(path, "/install", 8) ||
             !strncmp(path, "/api/files/", 11)) {
-                send_text(fd, "PS5PKGREVELF: test build, installs disabled");
+                send_text(fd, APP_TAG ": test build, installs disabled");
                 close(fd);
                 return;
         }
@@ -180,7 +180,7 @@ handle_client(int fd)
 
         body_len = content_length(buf);
         if (body_len < 0 || body_len > BODY_MAX) {
-                send_text(fd, "PS5PKGREVELF: bad content length");
+                send_text(fd, APP_TAG ": bad content length");
                 close(fd);
                 return;
         }
@@ -217,7 +217,7 @@ handle_client(int fd)
                         /* short body: the missing tail would be stale
                          * bytes from whatever request last used this
                          * shared buffer — refuse instead of serving it */
-                        send_text(fd, "PS5PKGREVELF: short body");
+                        send_text(fd, APP_TAG ": short body");
                         close(fd);
                         return;
                 }
@@ -234,7 +234,7 @@ handle_client(int fd)
         if (r)
                 r->fn(fd, path, body, body_len);
         else
-                send_text(fd, "PS5PKGREVELF: unknown endpoint");
+                send_text(fd, APP_TAG ": unknown endpoint");
 
         close(fd);
 }

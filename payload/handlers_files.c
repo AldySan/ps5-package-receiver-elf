@@ -128,7 +128,7 @@ h_files_done(int fd, const char *path, char *body, long body_len)
 	           (!S_ISDIR(st.st_mode) && (long long)st.st_size != want)) {
 		send_text(fd, "error:size mismatch");
 	} else {
-		char out[160], toast[160], base[128];
+		char out[160], toast[192], base[128];
 		const char *b = strrchr(local, '/');
 
 		snprintf(base, sizeof(base), "%s", b ? b + 1 : local);
@@ -136,7 +136,7 @@ h_files_done(int fd, const char *path, char *body, long body_len)
 		    "{\"ok\":true,\"size\":%lld}", (long long)st.st_size);
 		send_json(fd, out);
 		snprintf(toast, sizeof(toast),
-		    "PS5PKGREVELF: received %s", base);
+		    APP_TAG ": received %s", base);
 		notify_user(toast);
 	}
 }

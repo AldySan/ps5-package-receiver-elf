@@ -1320,6 +1320,40 @@ installer_install(const char *path, const char *want_name,
         return rc;
 }
 
+/* the last finished install, served by /api/status: an idle console
+ * looks the same whether the install succeeded or failed, so the page
+ * matches lastUrl against the install it queued and reads the outcome
+ * from ok/name/err. */
+static pthread_mutex_t g_last_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_last_ok = 0;
+static char g_last_url[512];
+static char g_last_name[128];
+static char g_last_err[160];
+
+static void
+record_last_install(const char *url, int ok, const char *name,
+    const char *err)
+{
+        pthread_mutex_lock(&g_last_lock);
+        g_last_ok = ok;
+        snprintf(g_last_url, sizeof(g_last_url), "%s", url ? url : "");
+        snprintf(g_last_name, sizeof(g_last_name), "%s", name ? name : "");
+        snprintf(g_last_err, sizeof(g_last_err), "%s", err ? err : "");
+        pthread_mutex_unlock(&g_last_lock);
+}
+
+void
+install_last_result(int *ok, char *url, size_t url_sz, char *name,
+    size_t name_sz, char *err, size_t err_sz)
+{
+        pthread_mutex_lock(&g_last_lock);
+        *ok = g_last_ok;
+        snprintf(url, url_sz, "%s", g_last_url);
+        snprintf(name, name_sz, "%s", g_last_name);
+        snprintf(err, err_sz, "%s", g_last_err);
+        pthread_mutex_unlock(&g_last_lock);
+}
+
 static void *
 install_worker(void *arg)
 {
@@ -1334,12 +1368,15 @@ install_worker(void *arg)
             job->name[0] ? job->name : NULL,
             job->icon[0] ? job->icon : NULL, name, sizeof(name));
 
-        if (rc == 0)
+        if (rc == 0) {
                 snprintf(toast, sizeof(toast), APP_TAG ": installing %s", name);
-        else
+                err[0] = '\0';
+        } else {
                 snprintf(toast, sizeof(toast), APP_TAG ": install failed %s",
                     install_err_text(rc, err, sizeof(err)));
+        }
         notify_user(toast);
+        record_last_install(job->url, rc == 0, name, err);
         __sync_fetch_and_sub(&g_active_installs, 1);
         /* release the duplicate guard so a retry can run */
         pthread_mutex_lock(&g_cur_lock);

@@ -234,6 +234,13 @@ typedef struct install_job {
         char icon[512];
 } install_job_t;
 
+/* the one URL currently claimed by a running install worker, so a
+ * second click on the same tile stacks a toast, not a second
+ * multi-gigabyte download */
+static pthread_mutex_t g_cur_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_cur_url[URL_MAX];
+static int g_cur_live = 0;
+
 /* staged local install: knobs and our own error codes (below -2) */
 #define STAGE_DIR     "/data/homebrew/.pkg-stage"
 #define STAGE_CHUNK   (1024 * 1024)
@@ -250,6 +257,46 @@ typedef struct install_job {
 #define STAGE_SPACE  (-13)
 #define STAGE_SERVER (-14)
 #define STAGE_PULL   (-15)
+#define STAGE_GONE   (-16) /* the PC answered "no such package" */
+
+/* staging resilience knobs: a dropped connection is resumed (the PC
+ * speaks Range), a stalled one is retried, and progress is toasted */
+#define STAGE_TRIES     4       /* first attempt plus three resumes */
+#define STAGE_RETRY_S   2       /* pause between attempts */
+#define STAGE_STALL_S   30      /* one recv may stall this long */
+#define STAGE_MIN_STEP  (256LL * 1024 * 1024)
+
+/* one progress toast per slice of the package: an eighth of it, but at
+ * least 256 MiB so small packages still report */
+static long long
+stage_report_step(long long want)
+{
+        if (want <= 0)
+                return 1LL << 30;
+        if (want / 8 >= STAGE_MIN_STEP)
+                return want / 8;
+        return STAGE_MIN_STEP;
+}
+
+/* "staging <name> 3.7/10.4 GB" — integer math, no float formatting */
+static void
+stage_progress(const char *what, const char *name, long long got,
+    long long want)
+{
+        char toast[352];
+        long long gt = (got * 10) / (1LL << 30);
+        long long wt = want > 0 ? (want * 10) / (1LL << 30) : -1;
+
+        if (wt >= 0)
+                snprintf(toast, sizeof(toast),
+                    APP_TAG ": %s %s %lld.%lld/%lld.%lld GB", what, name,
+                    gt / 10, gt % 10, wt / 10, wt % 10);
+        else
+                snprintf(toast, sizeof(toast),
+                    APP_TAG ": %s %s %lld.%lld GB", what, name,
+                    gt / 10, gt % 10);
+        notify_user(toast);
+}
 
 /* human text for install errors. Negative codes are ours (dlopen
  * failures and the staged-fallback codes below); the rest are SCE codes,
@@ -267,6 +314,9 @@ install_err_text(int rc, char *buf, size_t sz)
         else if (rc == STAGE_NET)
                 snprintf(buf, sz, "could not download the package from the "
                     "PC (check its firewall, VPN or proxy)");
+        else if (rc == STAGE_GONE)
+                snprintf(buf, sz, "the PC stopped serving this package — "
+                    "refresh its library and send again");
         else if (rc == STAGE_DISK)
                 snprintf(buf, sz, "could not write the staged package");
         else if (rc == STAGE_SHORT)
@@ -295,6 +345,9 @@ install_err_text(int rc, char *buf, size_t sz)
                 snprintf(buf, sz, "0x%08X (console firmware is too old)", c);
         else if (c == 0x80A3000Cu)
                 snprintf(buf, sz, "0x%08X (close the game first)", c);
+        else if (c == 0x80B22404u)
+                snprintf(buf, sz, "0x%08X (this console refuses installs "
+                    "from a URL, even a local one)", c);
         else if (c == 0x80A30002u)
                 snprintf(buf, sz, "0x%08X (not enough free space)", c);
         else if (c == 0x80A30008u || c == 0x80A30009u)
@@ -391,23 +444,25 @@ stage_name(const char *url, char *out, size_t sz)
                 snprintf(out + n, sz - n, ".pkg");
 }
 
-/* sequential GET of one http:// URL into `local`.
- * 0 ok (bytes written in *size_out); STAGE_NET / STAGE_DISK /
- * STAGE_SHORT / STAGE_SPACE otherwise. A failed copy is unlinked, never
- * left behind half-written. */
+/* sequential GET of one http:// URL into `local`, resumed across dropped
+ * or stalled connections (a Range-capable server lets us continue where
+ * we stopped), with progress toasts so a multi-gigabyte copy is never
+ * silent. 0 ok (bytes written in *size_out); STAGE_NET / STAGE_DISK /
+ * STAGE_SHORT / STAGE_SPACE / STAGE_GONE otherwise. A failed copy is
+ * unlinked, never left behind half-written. */
 static int
-stage_fetch(const char *url, const char *local, long long *size_out)
+stage_fetch(const char *url, const char *local, const char *name,
+    long long *size_out)
 {
         char host[256], portstr[16] = "80", get[URL_MAX];
-        char req[URL_MAX + 256], hs[4096];
+        char req[URL_MAX + 320], hs[4096];
         struct addrinfo hints, *res = NULL, *rp;
         struct statvfs sv;
         struct timeval tv;
         const char *p, *cl, *slash;
-        long long want = -1, got = 0;
-        int s = -1, out = -1, rc = STAGE_NET, term = 0;
+        long long want = -1, got = 0, step, reported = 0;
+        int s = -1, out = -1, rc = STAGE_NET, attempt;
         char *hb = NULL;
-        size_t hl = 0;
         ssize_t n;
 
         *size_out = -1;
@@ -422,46 +477,74 @@ stage_fetch(const char *url, const char *local, long long *size_out)
                 snprintf(portstr, sizeof(portstr), "%s", p + 1);
                 host[p - host] = '\0';
         }
-
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
-        if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res)
-                return STAGE_NET;
-        for (rp = res; rp; rp = rp->ai_next) {
-                s = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-                if (s < 0)
-                        continue;
-                if (connect(s, rp->ai_addr, rp->ai_addrlen) == 0)
-                        break;
-                close(s);
-                s = -1;
-        }
-        freeaddrinfo(res);
-        if (s < 0)
-                return STAGE_NET;
-        tv.tv_sec = 30;
-        tv.tv_usec = 0;
-        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-        snprintf(req, sizeof(req),
-            "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-            get, host);
-        if (send_all(s, req, strlen(req)) != 0)
-                goto out;
+        hb = malloc(STAGE_CHUNK);
+        if (!hb)
+                return STAGE_DISK;
+        step = stage_report_step(-1);
 
-        /* headers byte-wise: only the \r\n\r\n terminator decides where the
-         * body starts, so a mid-headers EOF is never "success" */
-        {
+        for (attempt = 0; attempt < STAGE_TRIES; attempt++) {
+                int code = 0, term = 0, fatal = 0, done = 0;
+                char range[64] = "";
+                size_t hl = 0;
                 char c;
 
+                /* the status-code reads below may look past a too-short
+                 * header line; keep those bytes defined */
+                memset(hs, 0, 16);
+                if (attempt > 0)
+                        sleep(STAGE_RETRY_S);
+                s = -1;
+                if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res) {
+                        rc = STAGE_NET;
+                        continue;
+                }
+                for (rp = res; rp; rp = rp->ai_next) {
+                        s = socket(rp->ai_family, rp->ai_socktype,
+                            rp->ai_protocol);
+                        if (s < 0)
+                                continue;
+                        if (connect(s, rp->ai_addr, rp->ai_addrlen) == 0)
+                                break;
+                        close(s);
+                        s = -1;
+                }
+                freeaddrinfo(res);
+                res = NULL;
+                if (s < 0) {
+                        rc = STAGE_NET;
+                        continue;
+                }
+                tv.tv_sec = STAGE_STALL_S;
+                tv.tv_usec = 0;
+                setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+                if (got > 0)
+                        snprintf(range, sizeof(range),
+                            "Range: bytes=%lld-\r\n", got);
+                snprintf(req, sizeof(req),
+                    "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n"
+                    "%s\r\n", get, host, range);
+                if (send_all(s, req, strlen(req)) != 0) {
+                        close(s);
+                        s = -1;
+                        rc = STAGE_NET;
+                        continue;
+                }
+
+                /* headers byte-wise: only the \r\n\r\n terminator decides
+                 * where the body starts, so a mid-headers EOF is never
+                 * "success" */
                 for (;;) {
                         n = recv(s, &c, 1, 0);
                         if (n <= 0)
-                                goto out;
+                                break;
                         if (hl + 1 >= sizeof(hs))
-                                goto out;
+                                break;
                         hs[hl++] = c;
                         hs[hl] = '\0';
                         if (hl >= 4 && !strcmp(hs + hl - 4, "\r\n\r\n")) {
@@ -469,66 +552,148 @@ stage_fetch(const char *url, const char *local, long long *size_out)
                                 break;
                         }
                 }
-        }
-        if (!term || strncmp(hs, "HTTP/", 5) != 0 || hs[9] != '2')
-                goto out;
-        cl = strcasestr(hs, "Content-Length:");
-        if (!cl)
-                cl = strcasestr(hs, "content-length:");
-        if (cl)
-                want = strtoll(cl + 15, NULL, 10);
-
-        /* only stage what /data can actually hold */
-        if (want > 0 && statvfs("/data", &sv) == 0) {
-                long long freeb = (long long)sv.f_bavail * sv.f_frsize;
-
-                if (freeb < want + 64LL * 1024 * 1024) {
-                        rc = STAGE_SPACE;
-                        goto out;
+                if (!term || strncmp(hs, "HTTP/", 5) != 0) {
+                        close(s);
+                        s = -1;
+                        rc = STAGE_NET;
+                        continue;
                 }
-        }
-
-        hb = malloc(STAGE_CHUNK);
-        if (!hb) {
-                rc = STAGE_DISK;
-                goto out;
-        }
-        out = open(local, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (out < 0) {
-                rc = STAGE_DISK;
-                goto out;
-        }
-        for (;;) {
-                ssize_t off = 0;
-
-                n = recv(s, hb, STAGE_CHUNK, 0);
-                if (n < 0) {
-                        if (errno == EINTR)
-                                continue;
-                        goto out;
+                if (hs[9] >= '0' && hs[9] <= '9' && hs[10] >= '0' &&
+                    hs[10] <= '9' && hs[11] >= '0' && hs[11] <= '9')
+                        code = (hs[9] - '0') * 100 + (hs[10] - '0') * 10 +
+                            (hs[11] - '0');
+                if (code == 404 || code == 410) {
+                        /* the PC itself says it does not have the package
+                         * anymore: retrying cannot help, and it is not a
+                         * firewall problem either */
+                        close(s);
+                        s = -1;
+                        rc = STAGE_GONE;
+                        break;
                 }
-                if (n == 0)
-                        break; /* EOF: the copy is complete */
-                while (off < n) {
-                        ssize_t w = write(out, hb + off, (size_t)(n - off));
+                if (hs[9] != '2') {
+                        close(s);
+                        s = -1;
+                        rc = STAGE_NET;
+                        continue;
+                }
+                cl = strcasestr(hs, "Content-Length:");
+                if (!cl)
+                        cl = strcasestr(hs, "content-length:");
+                {
+                        long long clv = cl ? strtoll(cl + 15, NULL, 10) : -1;
 
-                        if (w < 0) {
+                        if (code == 206 && got > 0) {
+                                /* partial body continues at `got`; the
+                                 * total is only derivable when we already
+                                 * know it or Content-Length says */
+                                if (want < 0 && clv > 0)
+                                        want = got + clv;
+                        } else {
+                                /* full body from zero. If we asked to
+                                 * resume and the server ignored it, start
+                                 * over from a clean file */
+                                if (got > 0) {
+                                        got = 0;
+                                        reported = 0;
+                                        if (out >= 0 &&
+                                            ftruncate(out, 0) != 0) {
+                                                rc = STAGE_DISK;
+                                                fatal = 1;
+                                        }
+                                }
+                                if (clv > 0) {
+                                        want = clv;
+                                        step = stage_report_step(want);
+                                }
+                        }
+                }
+                if (fatal) {
+                        close(s);
+                        s = -1;
+                        break;
+                }
+                /* only stage what /data can actually hold */
+                if (want > 0 && got == 0 && statvfs("/data", &sv) == 0) {
+                        long long freeb =
+                            (long long)sv.f_bavail * sv.f_frsize;
+
+                        if (freeb < want + 64LL * 1024 * 1024) {
+                                close(s);
+                                s = -1;
+                                rc = STAGE_SPACE;
+                                break;
+                        }
+                }
+                if (out < 0) {
+                        out = open(local, O_WRONLY | O_CREAT | O_TRUNC,
+                            0644);
+                        if (out < 0) {
+                                close(s);
+                                s = -1;
+                                rc = STAGE_DISK;
+                                break;
+                        }
+                }
+                if (lseek(out, got, SEEK_SET) < 0) {
+                        close(s);
+                        s = -1;
+                        rc = STAGE_DISK;
+                        break;
+                }
+                for (;;) {
+                        ssize_t off = 0;
+
+                        n = recv(s, hb, STAGE_CHUNK, 0);
+                        if (n < 0) {
                                 if (errno == EINTR)
                                         continue;
-                                rc = STAGE_DISK;
-                                goto out;
+                                rc = STAGE_NET; /* stall or reset */
+                                break;
                         }
-                        off += w;
+                        if (n == 0) {
+                                if (want > 0 && got < want)
+                                        rc = STAGE_SHORT;
+                                else {
+                                        rc = 0;
+                                        done = 1;
+                                }
+                                break;
+                        }
+                        while (off < n) {
+                                ssize_t w = write(out, hb + off,
+                                    (size_t)(n - off));
+
+                                if (w < 0) {
+                                        if (errno == EINTR)
+                                                continue;
+                                        rc = STAGE_DISK;
+                                        fatal = 1;
+                                        break;
+                                }
+                                off += w;
+                        }
+                        if (fatal)
+                                break;
+                        got += n;
+                        if (name && got - reported >= step) {
+                                stage_progress("staging", name, got, want);
+                                reported = got;
+                        }
                 }
-                got += n;
+                if (s >= 0) {
+                        close(s);
+                        s = -1;
+                }
+                if (done || fatal)
+                        break;
+                if (want > 0 && got >= want) {
+                        rc = 0;
+                        break;
+                }
+                /* otherwise: dropped or short — resume on the next
+                 * attempt instead of failing the whole install */
         }
-        if (want > 0 && got != want) {
-                rc = STAGE_SHORT;
-                goto out;
-        }
-        rc = 0;
-        *size_out = got;
-out:
         free(hb);
         if (s >= 0)
                 close(s);
@@ -536,6 +701,8 @@ out:
                 close(out);
         if (rc != 0)
                 unlink(local);
+        else
+                *size_out = got;
         return rc;
 }
 
@@ -1016,9 +1183,9 @@ staged_install(const char *url, const char *content_name,
     const char *icon_url)
 {
         char fname[160], url_name[192], stage_path[PATH_MAX_V], lb_url[256];
-        char toast[256];
+        char toast[320];
+        long long size = 0, lb_step, lb_reported = 0;
         lb_server_t *lb;
-        long long size = 0;
         time_t t0;
         int rc, pulled;
 
@@ -1032,7 +1199,7 @@ staged_install(const char *url, const char *content_name,
             APP_TAG ": LAN install refused, staging %s", content_name);
         notify_user(toast);
 
-        rc = stage_fetch(url, stage_path, &size);
+        rc = stage_fetch(url, stage_path, content_name, &size);
         if (rc != 0)
                 goto out;
         lb = calloc(1, sizeof(*lb));
@@ -1056,9 +1223,11 @@ staged_install(const char *url, const char *content_name,
                 goto out;
         }
         /* the console pulls the file from us now: serve until it has all of
-         * it, or is clearly not coming back */
+         * it, or is clearly not coming back — and keep the user posted,
+         * this phase is as long as the download was */
         t0 = time(NULL);
         pulled = 0;
+        lb_step = stage_report_step(lb->total);
         for (;;) {
                 long long served = lb_served_bytes(lb);
                 long long idle_ms = lb_idle_ms(lb);
@@ -1073,6 +1242,11 @@ staged_install(const char *url, const char *content_name,
                         break; /* downloader went away mid-pull */
                 if (time(NULL) - t0 > LB_PULL_CAP_S)
                         break; /* hard cap, paused downloads included */
+                if (served - lb_reported >= lb_step) {
+                        stage_progress("installing", content_name, served,
+                            lb->total);
+                        lb_reported = served;
+                }
                 sleep(1);
         }
         if (!pulled && lb_served_bytes(lb) >= lb->total)
@@ -1151,8 +1325,8 @@ install_worker(void *arg)
 {
         install_job_t *job = arg;
         char name[256];
-        char toast[256];
-        char err[64];
+        char toast[320];
+        char err[160];
         int rc;
 
         __sync_fetch_and_add(&g_active_installs, 1);
@@ -1167,6 +1341,13 @@ install_worker(void *arg)
                     install_err_text(rc, err, sizeof(err)));
         notify_user(toast);
         __sync_fetch_and_sub(&g_active_installs, 1);
+        /* release the duplicate guard so a retry can run */
+        pthread_mutex_lock(&g_cur_lock);
+        if (strcmp(job->url, g_cur_url) == 0) {
+                g_cur_live = 0;
+                g_cur_url[0] = '\0';
+        }
+        pthread_mutex_unlock(&g_cur_lock);
         free(job);
         return NULL;
 }
@@ -1199,7 +1380,32 @@ queue_install(const char *url, const char *name, const char *icon)
                 snprintf(job->icon, sizeof(job->icon), "%s", icon);
         else
                 job->icon[0] = '\0';
+        /* one in-flight install per URL: a double click must not stack a
+         * second identical staging download on the first */
+        pthread_mutex_lock(&g_cur_lock);
+        if (g_cur_live && strcmp(job->url, g_cur_url) == 0) {
+                pthread_mutex_unlock(&g_cur_lock);
+                {
+                        char toast[320];
+
+                        snprintf(toast, sizeof(toast),
+                            APP_TAG ": already installing %s",
+                            job->name[0] ? job->name : job->url);
+                        notify_user(toast);
+                }
+                free(job);
+                return 0;
+        }
+        snprintf(g_cur_url, sizeof(g_cur_url), "%s", job->url);
+        g_cur_live = 1;
+        pthread_mutex_unlock(&g_cur_lock);
         if (pthread_create(&tid, NULL, install_worker, job) != 0) {
+                pthread_mutex_lock(&g_cur_lock);
+                if (strcmp(g_cur_url, job->url) == 0) {
+                        g_cur_live = 0;
+                        g_cur_url[0] = '\0';
+                }
+                pthread_mutex_unlock(&g_cur_lock);
                 free(job);
                 return -1;
         }

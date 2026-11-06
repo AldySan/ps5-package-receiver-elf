@@ -1,5 +1,5 @@
 import * as React from "react";
-import { famOf, isBase, qTotal, useReceiver } from "@/lib/receiver";
+import { famOf, isPkgFmt, isTileBase, qTotal, useReceiver } from "@/lib/receiver";
 import { fmtSize } from "@/lib/format";
 import type { CatalogEntry } from "@/lib/types";
 import { Header } from "@/components/Header";
@@ -39,6 +39,17 @@ export default function App() {
     state: "same" | "partial";
   } | null>(null);
 
+  /* family keys that have a base game of their own — needed to place
+   * add-ons, and to spot orphan add-ons (base game missing from the
+   * library) which become tiles of their own instead of vanishing */
+  const baseKeys = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const g of r.catalog) {
+      if (isPkgFmt(g) && g.role === "Game" && g.familyKey) s.add(g.familyKey);
+    }
+    return s;
+  }, [r.catalog]);
+
   /* the visible slice of the catalog (same rules as the old page) */
   const list = React.useMemo(() => {
     const ql = q.trim().toLowerCase();
@@ -53,12 +64,12 @@ export default function App() {
       return x < y ? -1 : x > y ? 1 : 0;
     };
 
+    /* images are the raw-copy formats; everything else installable
+     * (.pkg and .fpkg) is a Games tile */
     if (kind === "images")
-      return src.filter((g) => g.format !== "pkg").sort(byTitle);
-    return src
-      .filter((g) => g.format === "pkg" && isBase(g))
-      .sort(byTitle);
-  }, [r.catalog, q, plat, kind]);
+      return src.filter((g) => !isPkgFmt(g)).sort(byTitle);
+    return src.filter((g) => isTileBase(g, baseKeys)).sort(byTitle);
+  }, [r.catalog, q, plat, kind, baseKeys]);
 
   /* "N games" / "N images" — set imperatively so the flows (install,
    * copy progress) own the same line in between, like the old page */
@@ -81,8 +92,8 @@ export default function App() {
   }, [list, r.catalogLoaded, r.catalog.length, kind]);
 
   const family = React.useMemo(
-    () => (openEntry ? famOf(r.catalog, openEntry) : []),
-    [r.catalog, openEntry],
+    () => (openEntry ? famOf(r.catalog, openEntry, baseKeys) : []),
+    [r.catalog, openEntry, baseKeys],
   );
 
   /* add-on count per family key, computed once per catalog — the grid
@@ -91,11 +102,11 @@ export default function App() {
   const addonCounts = React.useMemo(() => {
     const m = new Map<string, number>();
     for (const g of r.catalog) {
-      if (g.format !== "pkg" || isBase(g) || !g.familyKey) continue;
+      if (!isPkgFmt(g) || isTileBase(g, baseKeys) || !g.familyKey) continue;
       m.set(g.familyKey, (m.get(g.familyKey) || 0) + 1);
     }
     return m;
-  }, [r.catalog]);
+  }, [r.catalog, baseKeys]);
 
   /* install actions */
   const installOne = (g: CatalogEntry) => {
@@ -103,7 +114,7 @@ export default function App() {
   };
   const askInstallAll = (base: CatalogEntry) => {
     setOpenEntry(null);
-    setPendingAll([base, ...famOf(r.catalog, base)]);
+    setPendingAll([base, ...famOf(r.catalog, base, baseKeys)]);
   };
   const confirmInstallAll = () => {
     const list = pendingAll;
@@ -149,6 +160,7 @@ export default function App() {
         value={r.pc}
         onSave={r.savePc}
         onRefresh={r.loadCatalog}
+        onAuto={r.useAutoPc}
       />
 
       <FilterBar

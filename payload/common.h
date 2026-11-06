@@ -17,9 +17,9 @@
 
 /* bump on every behavior change; the page shows receiver vs page tags */
 #ifdef TEST_ONLY
-#define RECEIVER_BUILD "v0.0.7-TEST"
+#define RECEIVER_BUILD "v0.0.8-TEST"
 #else
-#define RECEIVER_BUILD "v0.0.7"
+#define RECEIVER_BUILD "v0.0.8"
 #endif
 
 /* every console notification and plain-text HTTP reply starts with the

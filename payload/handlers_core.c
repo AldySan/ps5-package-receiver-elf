@@ -8,6 +8,7 @@
 #include "webui.h"
 #include "pull.h"
 #include "discovery.h"
+#include "installer.h"
 #include "handlers.h"
 
 /* Core endpoints: the WebUI page, the logo it embeds, and the small
@@ -53,17 +54,37 @@ h_dbg(int fd, const char *path, char *body, long body_len)
 void
 h_status(int fd, const char *path, char *body, long body_len)
 {
-        char out[512];
+        /* every string goes through json_escape: a quote or backslash in
+         * a file or game name must not produce broken JSON (the page
+         * would silently keep the last status forever). The buffer is
+         * sized for the worst case: each escaped field can double. */
+        char out[3072];
+        char pulln[128], lasturl[512], lastname[128], lasterr[160];
+        char epulln[256], eurl[1024], ename[256], eerr[320];
+        int last_ok;
 
-        snprintf(out, sizeof(out), "{\"busy\":%s,\"active\":%d,"
+        snprintf(pulln, sizeof(pulln), "%s",
+            pull_active() ? pull_name() : "");
+        json_escape(pulln, epulln, sizeof(epulln));
+        install_last_result(&last_ok, lasturl, sizeof(lasturl),
+            lastname, sizeof(lastname), lasterr, sizeof(lasterr));
+        json_escape(lasturl, eurl, sizeof(eurl));
+        json_escape(lastname, ename, sizeof(ename));
+        json_escape(lasterr, eerr, sizeof(eerr));
+        snprintf(out, sizeof(out),
+            "{\"busy\":%s,\"active\":%d,"
             "\"pull\":%s,\"pullName\":\"%s\","
-            "\"pullGot\":%lld,\"pullWant\":%lld,\"pullPaused\":%s}",
+            "\"pullGot\":%lld,\"pullWant\":%lld,\"pullPaused\":%s,"
+            "\"lastOk\":%s,\"lastUrl\":\"%s\","
+            "\"lastName\":\"%s\",\"lastErr\":\"%s\"}",
             g_active_installs > 0 ? "true" : "false",
             g_active_installs,
             pull_active() ? "true" : "false",
-            pull_active() ? pull_name() : "",
+            epulln,
             pull_got(), pull_want(),
-            pull_paused() ? "true" : "false");
+            pull_paused() ? "true" : "false",
+            last_ok ? "true" : "false",
+            eurl, ename, eerr);
         send_json(fd, out);
 }
 

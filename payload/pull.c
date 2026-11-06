@@ -577,9 +577,15 @@ pull_start(const char *url, const char *local, int resume)
 	 * that arrives after this reply can no longer be swallowed by
 	 * the worker resetting the flag itself. A pause that outlived
 	 * its job (pressed just as that copy finished) must not start
-	 * the next one frozen. */
+	 * the next one frozen. Same for the progress numbers and the
+	 * name: until the worker's first assignment they still held
+	 * the PREVIOUS copy's bytes, which the page would happily show
+	 * as the new copy's progress. */
 	g_pull_cancel = 0;
 	g_pull_paused = 0;
+	g_pull_got = 0;
+	g_pull_want = -1;
+	g_pull_name[0] = '\0';
 	g_pull_active = 1;
 	job = malloc(sizeof(*job));
 	if (!job) {

@@ -23,7 +23,8 @@ function roleBadge(role: string | undefined) {
     return <Badge className="border-transparent text-white" style={{ backgroundColor: "#E17B7B" }}>Patch</Badge>;
   if (role === "DLC")
     return <Badge className="border-transparent text-white" style={{ backgroundColor: "#E8A34C" }}>DLC</Badge>;
-  return <Badge>{role}</Badge>;
+  /* a member without a role still gets a readable chip, not an empty one */
+  return <Badge>{role || "Add-on"}</Badge>;
 }
 
 function memberMeta(g: CatalogEntry) {

@@ -232,14 +232,17 @@ typedef struct install_job {
         char url[URL_MAX];
         char name[256];
         char icon[512];
+        int slot; /* guard slot below, -1 = unguarded */
 } install_job_t;
 
-/* the one URL currently claimed by a running install worker, so a
- * second click on the same tile stacks a toast, not a second
- * multi-gigabyte download */
+/* the URLs currently claimed by running install workers, so a second
+ * click on the same tile stacks a toast, not a second multi-gigabyte
+ * download. A table, not one slot: a second, different install must
+ * not knock the first one's claim off and let a duplicate through. */
+#define CUR_SLOTS 8
 static pthread_mutex_t g_cur_lock = PTHREAD_MUTEX_INITIALIZER;
-static char g_cur_url[URL_MAX];
-static int g_cur_live = 0;
+static char g_cur_urls[CUR_SLOTS][URL_MAX];
+static int g_cur_used[CUR_SLOTS];
 
 /* staged local install: knobs and our own error codes (below -2) */
 #define STAGE_DIR     "/data/homebrew/.pkg-stage"
@@ -1380,10 +1383,9 @@ install_worker(void *arg)
         __sync_fetch_and_sub(&g_active_installs, 1);
         /* release the duplicate guard so a retry can run */
         pthread_mutex_lock(&g_cur_lock);
-        if (strcmp(job->url, g_cur_url) == 0) {
-                g_cur_live = 0;
-                g_cur_url[0] = '\0';
-        }
+        if (job->slot >= 0 && g_cur_used[job->slot] &&
+            strcmp(job->url, g_cur_urls[job->slot]) == 0)
+                g_cur_used[job->slot] = 0;
         pthread_mutex_unlock(&g_cur_lock);
         free(job);
         return NULL;
@@ -1420,28 +1422,46 @@ queue_install(const char *url, const char *name, const char *icon)
         /* one in-flight install per URL: a double click must not stack a
          * second identical staging download on the first */
         pthread_mutex_lock(&g_cur_lock);
-        if (g_cur_live && strcmp(job->url, g_cur_url) == 0) {
-                pthread_mutex_unlock(&g_cur_lock);
-                {
-                        char toast[320];
+        {
+                int i, slot = -1, dup = 0;
 
-                        snprintf(toast, sizeof(toast),
-                            APP_TAG ": already installing %s",
-                            job->name[0] ? job->name : job->url);
-                        notify_user(toast);
+                for (i = 0; i < CUR_SLOTS; i++) {
+                        if (g_cur_used[i]) {
+                                if (strcmp(job->url,
+                                    g_cur_urls[i]) == 0) {
+                                        dup = 1;
+                                        break;
+                                }
+                        } else if (slot < 0) {
+                                slot = i;
+                        }
                 }
-                free(job);
-                return 0;
+                if (dup) {
+                        pthread_mutex_unlock(&g_cur_lock);
+                        {
+                                char toast[320];
+
+                                snprintf(toast, sizeof(toast),
+                                    APP_TAG ": already installing %s",
+                                    job->name[0] ? job->name : job->url);
+                                notify_user(toast);
+                        }
+                        free(job);
+                        return 0;
+                }
+                if (slot >= 0) {
+                        snprintf(g_cur_urls[slot],
+                            sizeof(g_cur_urls[slot]), "%s", job->url);
+                        g_cur_used[slot] = 1;
+                }
+                job->slot = slot;
         }
-        snprintf(g_cur_url, sizeof(g_cur_url), "%s", job->url);
-        g_cur_live = 1;
         pthread_mutex_unlock(&g_cur_lock);
         if (pthread_create(&tid, NULL, install_worker, job) != 0) {
                 pthread_mutex_lock(&g_cur_lock);
-                if (strcmp(g_cur_url, job->url) == 0) {
-                        g_cur_live = 0;
-                        g_cur_url[0] = '\0';
-                }
+                if (job->slot >= 0 && g_cur_used[job->slot] &&
+                    strcmp(job->url, g_cur_urls[job->slot]) == 0)
+                        g_cur_used[job->slot] = 0;
                 pthread_mutex_unlock(&g_cur_lock);
                 free(job);
                 return -1;

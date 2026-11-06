@@ -23,6 +23,13 @@ export interface StatusReply {
   pullGot: number;
   pullWant: number;
   pullPaused: boolean;
+  /* outcome of the last finished install. Newer payloads only: absent
+   * on older ones, where "idle" was all the page could ever see. The
+   * page matches lastUrl against the install it queued. */
+  lastOk?: boolean;
+  lastUrl?: string;
+  lastName?: string;
+  lastErr?: string;
 }
 
 /* GET /api/version */

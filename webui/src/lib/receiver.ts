@@ -11,6 +11,12 @@ import { fmtSize, fmtSpd } from "./format";
 /* PKG Sender's HTTP port on the PC */
 const PC_PORT = 9898;
 
+/* formats the console installs as a package (a plain .pkg or a .fpkg);
+ * anything else (exfat/ffpkg/ffpfsc/ffpfs) is a raw file copy */
+export function isPkgFmt(g: CatalogEntry): boolean {
+  return g.format === "pkg" || g.format === "fpkg";
+}
+
 /* same helpers the old page had */
 export function lone(g: CatalogEntry): boolean {
   return (g.familyKey || "").indexOf("FILE:") === 0;
@@ -20,6 +26,20 @@ export function isBase(g: CatalogEntry): boolean {
   return g.role === "Game" || lone(g);
 }
 
+/* entries that get their own tile in the Games grid: a Game, or an
+ * add-on whose base game is missing from the library — otherwise it
+ * would be invisible in both tabs. baseKeys = the family keys that
+ * have a base game of their own. */
+export function isTileBase(
+  g: CatalogEntry,
+  baseKeys: Set<string>,
+): boolean {
+  return (
+    isPkgFmt(g) &&
+    (isBase(g) || !g.familyKey || !baseKeys.has(g.familyKey))
+  );
+}
+
 function rank(role: string | undefined): number {
   if (role === "Patch") return 1;
   if (role === "DLC") return 2;
@@ -27,12 +47,16 @@ function rank(role: string | undefined): number {
 }
 
 /* patches + DLC that belong to the same family as `g` */
-export function famOf(all: CatalogEntry[], g: CatalogEntry): CatalogEntry[] {
+export function famOf(
+  all: CatalogEntry[],
+  g: CatalogEntry,
+  baseKeys: Set<string>,
+): CatalogEntry[] {
   return all
     .filter(
       (m) =>
-        m.format === "pkg" &&
-        !isBase(m) &&
+        isPkgFmt(m) &&
+        !isTileBase(m, baseKeys) &&
         m.familyKey === g.familyKey,
     )
     .sort((a, b) => rank(a.role) - rank(b.role));
@@ -112,25 +136,33 @@ export function useReceiver() {
     }
   }, []);
 
-  /* auto PC (UDP announce relayed by the payload), then manual input */
+  /* auto PC (UDP announce relayed by the payload), then manual input.
+   * An address the user typed and saved sticks: pri_manual keeps any
+   * fresh announce from silently switching the library to another PC
+   * on the LAN. Clearing the field (or the Auto button) lifts it. */
   const resolvePc = useCallback(async (): Promise<string> => {
+    const stored = (localStorage.getItem("pri_pc") || "").trim();
+    if (localStorage.getItem("pri_manual") === "1" && stored) {
+      setPc(stored);
+      setPcSource("manual");
+      return stored;
+    }
     try {
       const j = await api.pc();
       if (j.pc && j.age >= 0 && j.age < 15) {
         setPc(j.pc);
         setPcSource("auto");
         localStorage.setItem("pri_pc", j.pc);
+        localStorage.removeItem("pri_manual");
         return j.pc;
       }
     } catch {
-      /* fall through to the manual address */
+      /* fall through to the stored address */
     }
-    const m =
-      (pcRef.current || localStorage.getItem("pri_pc") || "").trim() || "";
-    if (m) {
-      setPc(m);
+    if (stored) {
+      setPc(stored);
       setPcSource("manual");
-      return m;
+      return stored;
     }
     setPcSource("none");
     return "";
@@ -157,53 +189,142 @@ export function useReceiver() {
       setCatalogLoaded(true);
       loadSpace();
     } catch (ex) {
+      const slow =
+        typeof ex === "object" &&
+        ex !== null &&
+        (ex as { name?: string }).name === "AbortError";
       setMsg({
-        text: "Error: " + ex + " — is Publish library on and the PC reachable?",
+        text: slow
+          ? "Error: " +
+            target +
+            " did not answer — check the address and that Publish library is on."
+          : "Error: " + ex + " — is Publish library on and the PC reachable?",
         kind: "err",
       });
+      /* the address is the thing to fix — show the input */
+      setPcRowOpen(true);
     }
   }, [loadSpace, resolvePc]);
 
   const savePc = useCallback(
     (value: string) => {
-      const v = value.trim();
+      /* accept a pasted full URL but use the bare host everywhere */
+      const v = value
+        .trim()
+        .replace(/^https?:\/\//i, "")
+        .replace(/\/+$/, "")
+        .replace(/:\d+$/, "");
       setPc(v);
       if (v) {
         setPcSource("manual");
         localStorage.setItem("pri_pc", v);
+        localStorage.setItem("pri_manual", "1");
+        loadCatalog(v);
+      } else {
+        /* an emptied field forgets the choice entirely */
+        localStorage.removeItem("pri_pc");
+        localStorage.removeItem("pri_manual");
+        setPcSource("none");
+        loadCatalog();
       }
-      loadCatalog(v || undefined);
     },
     [loadCatalog],
   );
 
+  /* back to discovery: forget the pinned address and take whatever
+   * announces itself (or say so when nothing does) */
+  const useAutoPc = useCallback(() => {
+    localStorage.removeItem("pri_pc");
+    localStorage.removeItem("pri_manual");
+    setPc("");
+    setPcSource("none");
+    loadCatalog();
+  }, [loadCatalog]);
+
   /* ── installs ───────────────────────────────────────────────────── */
 
-  /* queue one install; the reply tells us if it was accepted */
-  const installOne = useCallback(async (g: CatalogEntry): Promise<boolean> => {
-    const host = pcRef.current;
-    if (!host) return false;
-    const u = "http://" + host + ":" + PC_PORT + "/pkg/" + encodeURIComponent(g.id);
-    const icon = g.hasIcon
-      ? "http://" + host + ":" + PC_PORT + "/icon/" + encodeURIComponent(g.id)
-      : undefined;
-    try {
-      const t = await api.install(u, g.title, icon);
-      if (t.indexOf("ok:") !== 0) {
-        setMsg({ text: t, kind: "err" });
-        return false;
+  /* queue one install; returns the install URL when it was accepted
+   * (the caller matches it against the status poll to learn the real
+   * outcome), or null when it was not */
+  const installOne = useCallback(
+    async (g: CatalogEntry): Promise<string | null> => {
+      const host = pcRef.current;
+      if (!host) {
+        setMsg({ text: "No PC address — save one first.", kind: "err" });
+        return null;
       }
-      return true;
-    } catch (ex) {
-      setMsg({ text: "Error: " + ex, kind: "err" });
-      return false;
-    }
-  }, []);
+      const u =
+        "http://" + host + ":" + PC_PORT + "/pkg/" + encodeURIComponent(g.id);
+      const icon = g.hasIcon
+        ? "http://" + host + ":" + PC_PORT + "/icon/" + encodeURIComponent(g.id)
+        : undefined;
+      try {
+        const t = await api.install(u, g.title, icon);
+        if (t.indexOf("ok:") !== 0) {
+          setMsg({ text: t, kind: "err" });
+          return null;
+        }
+        return u;
+      } catch (ex) {
+        setMsg({ text: "Error: " + ex, kind: "err" });
+        return null;
+      }
+    },
+    [],
+  );
+
+  /* follow an install we queued (matched by its URL) until the console
+   * reports an outcome. Returns the status reply that ended the watch:
+   * on newer payloads lastUrl/lastOk/lastErr carry the real result,
+   * on older ones the caller can only say "check the console". Returns
+   * null when the console stopped answering entirely. */
+  const watchInstall = useCallback(
+    async (
+      url: string,
+      progress?: (s: StatusReply) => void,
+    ): Promise<StatusReply | null> => {
+      let misses = 0;
+      for (let i = 0; i < 630; i++) {
+        await sleep(2000);
+        let s: StatusReply;
+        try {
+          s = await api.status();
+          misses = 0;
+        } catch {
+          /* one dropped reply is normal mid-install; only give up
+           * after a few in a row */
+          if (++misses >= 3) return null;
+          continue;
+        }
+        if (s.busy) {
+          progress?.(s);
+          continue;
+        }
+        /* our own outcome is on record — that is the verdict */
+        if (s.lastUrl === url) return s;
+        /* idle without our record: the worker may simply not be up
+         * yet; after ~10 s the record is too old to trust either way */
+        if (i >= 5) return s;
+      }
+      /* ~21 min and still busy: the install outlived the watch */
+      return {
+        busy: true,
+        active: 1,
+        pull: false,
+        pullName: "",
+        pullGot: 0,
+        pullWant: 0,
+        pullPaused: false,
+      };
+    },
+    [],
+  );
 
   /* install a single package, showing progress until it is done */
   const installEntry = useCallback(
     async (g: CatalogEntry) => {
-      if (!(await installOne(g))) return;
+      const u = await installOne(g);
+      if (!u) return;
       toast.success("Install queued", {
         description: g.title + " — watch the console notifications.",
       });
@@ -211,108 +332,77 @@ export function useReceiver() {
         text: "ok: install queued for " + g.title + " — watch the console notifications.",
         kind: "info",
       });
-      let misses = 0;
-      for (let i = 0; i < 300; i++) {
-        await sleep(2000);
-        try {
-          const s = await api.status();
-          misses = 0;
-          if (!s.busy) {
-            setMsg({
-              text: "Done: " + g.title + " — check the console.",
-              kind: "ok",
-            });
-            toast.success("Installed", { description: g.title });
-            loadSpace();
-            return;
-          }
-          setMsg({
-            text: "Installing " + g.title + "... (active: " + s.active + ")",
-            kind: "info",
-          });
-        } catch {
-          /* one dropped reply is normal mid-install; only stop watching
-           * after a few in a row, and say so instead of leaving
-           * "Installing..." on screen forever */
-          if (++misses >= 3) {
-            setMsg({
-              text: "Lost track of " + g.title + " — check the console.",
-              kind: "err",
-            });
-            return;
-          }
-        }
-      }
-      /* polling window over, install still running: say so instead of
-       * leaving "Installing..." on screen forever */
-      setMsg({
-        text:
-          "Still installing " +
-          g.title +
-          " — watch the console notifications.",
-        kind: "info",
+      const s = await watchInstall(u, (st) => {
+        setMsg({
+          text: "Installing " + g.title + "... (active: " + st.active + ")",
+          kind: "info",
+        });
       });
+      loadSpace();
+      if (!s) {
+        setMsg({
+          text: "Lost track of " + g.title + " — check the console.",
+          kind: "err",
+        });
+        return;
+      }
+      if (s.lastUrl === u && s.lastOk === false) {
+        const why = s.lastErr ? " — " + s.lastErr : "";
+        setMsg({
+          text: "Install failed: " + (s.lastName || g.title) + why,
+          kind: "err",
+        });
+        toast.error("Install failed", {
+          description: (s.lastName || g.title) + why,
+        });
+        return;
+      }
+      if (s.busy) {
+        setMsg({
+          text:
+            "Still installing " +
+            g.title +
+            " — watch the console notifications.",
+          kind: "info",
+        });
+        return;
+      }
+      setMsg({
+        text: "Done: " + g.title + " — check the console.",
+        kind: "ok",
+      });
+      toast.success("Installed", { description: g.title });
     },
-    [installOne, loadSpace],
+    [installOne, loadSpace, watchInstall],
   );
 
-  const waitBusy = useCallback(async (): Promise<boolean> => {
-    let misses = 0;
-    for (let i = 0; i < 30; i++) {
-      await sleep(1000);
-      try {
-        if ((await api.status()).busy) return true;
-        misses = 0;
-      } catch {
-        if (++misses >= 3) return false;
-      }
-    }
-    return false;
-  }, []);
-
-  const waitIdle = useCallback(async (): Promise<boolean> => {
-    if (!(await waitBusy())) return false;
-    let misses = 0;
-    for (let i = 0; i < 600; i++) {
-      await sleep(2000);
-      try {
-        if (!(await api.status()).busy) return true;
-        misses = 0;
-      } catch {
-        /* the console keeps installing even if one status reply is
-         * lost — bail out only after a few consecutive misses */
-        if (++misses >= 3) return false;
-      }
-    }
-    return true;
-  }, [waitBusy]);
-
-  /* install a game and its add-ons back to back, one at a time */
+  /* install a game and its add-ons back to back, one at a time,
+   * stopping honestly when one of them fails */
   const runInstallAll = useCallback(
     async (list: CatalogEntry[]) => {
       const total = qTotal(list);
       let done = 0;
       setQueue({ done: 0, total });
       for (let i = 0; i < list.length; i++) {
-        setMsg({
-          text:
-            "Queue " +
-            (i + 1) +
-            "/" +
-            list.length +
-            ": " +
-            list[i].title +
-            "..." +
-            (total > 0
-              ? " (" + fmtSize(done) + " of " + fmtSize(total) + " done)"
-              : ""),
-          kind: "info",
-        });
-        if (!(await installOne(list[i]))) {
+        const label =
+          "Queue " +
+          (i + 1) +
+          "/" +
+          list.length +
+          ": " +
+          list[i].title +
+          "..." +
+          (total > 0
+            ? " (" + fmtSize(done) + " of " + fmtSize(total) + " done)"
+            : "");
+        setMsg({ text: label, kind: "info" });
+        const u = await installOne(list[i]);
+        if (!u) {
           setQueue(null); /* installOne already showed why it failed */
           return;
         }
-        if (!(await waitIdle())) {
+        const s = await watchInstall(u);
+        if (!s) {
           setQueue(null);
           setMsg({
             text:
@@ -320,6 +410,23 @@ export function useReceiver() {
               list[i].title +
               ". Check the console.",
             kind: "err",
+          });
+          return;
+        }
+        if (s.lastUrl === u && s.lastOk === false) {
+          setQueue(null);
+          const why = s.lastErr ? ": " + s.lastErr : "";
+          setMsg({
+            text:
+              "Install queue stopped — " +
+              (s.lastName || list[i].title) +
+              " failed" +
+              why +
+              ". Check the console.",
+            kind: "err",
+          });
+          toast.error("Install queue stopped", {
+            description: (s.lastName || list[i].title) + why,
           });
           return;
         }
@@ -341,7 +448,7 @@ export function useReceiver() {
       toast.success("Install queue finished", { description: list[0].title });
       loadSpace();
     },
-    [installOne, loadSpace, waitIdle],
+    [installOne, loadSpace, watchInstall],
   );
 
   /* ── PC -> console copies (images etc.) ──────────────────────────── */
@@ -369,7 +476,10 @@ export function useReceiver() {
   const startCopy = useCallback(
     async (g: CatalogEntry, mode: "overwrite" | "resume") => {
       const host = pcRef.current;
-      if (!host) return;
+      if (!host) {
+        setMsg({ text: "No PC address — save one first.", kind: "err" });
+        return;
+      }
       const file = g.file || g.title;
       setMsg({ text: "Copying " + file + "...", kind: "info" });
       try {
@@ -531,6 +641,7 @@ export function useReceiver() {
     /* actions */
     loadCatalog,
     savePc,
+    useAutoPc,
     installEntry,
     runInstallAll,
     prepareCopy,

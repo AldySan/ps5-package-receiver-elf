@@ -61,37 +61,56 @@ h_install_get(int fd, const char *path, char *body, long body_len)
 void
 h_install_post(int fd, const char *path, char *body, long body_len)
 {
-	char url[URL_MAX];
+	char url[URL_MAX], gname[256], gicon[512];
+	int total = 0, i, queued = 0;
 
-	if (json_first_package(body, url, sizeof(url))) {
-		char url_fixed[URL_MAX], gname[256], gicon[512];
-
-		gname[0] = '\0';
-		gicon[0] = '\0';
-		json_string(body, "name", gname, sizeof(gname));
-		json_string(body, "icon_url", gicon, sizeof(gicon));
-		/* icon_url arrives percent-encoded like packages (issue #6);
-		 * decode it symmetrically, then make any leftover raw
-		 * whitespace safe for the console installer. */
-		if (gicon[0]) {
-			char icon_dec[512];
-
-			url_decode(gicon, icon_dec, sizeof(icon_dec));
-			url_encode_spaces(icon_dec, gicon, sizeof(gicon));
-		}
-		url_encode_spaces(url, url_fixed, sizeof(url_fixed));
-		if (queue_install(url_fixed, gname[0] ? gname : NULL,
-		                  gicon[0] ? gicon : NULL) == 0)
-			send_json(fd, "{\"status\":\"success\"}");
-		else
-			send_json(fd,
-			    "{\"status\":\"fail\","
-			    "\"error\":\"queue failed\"}");
-	} else {
+	/* the wire contract is an array: queue EVERY url it carries.
+	 * Dropping all but the first used to leave the rest of a
+	 * multi-package request silently uninstalled. */
+	while (json_package_at(body, total, url, sizeof(url)))
+		total++;
+	if (total == 0) {
 		send_json(fd,
 		    "{\"status\":\"fail\","
 		    "\"error\":\"no package url\"}");
+		return;
 	}
+	gname[0] = '\0';
+	gicon[0] = '\0';
+	json_string(body, "name", gname, sizeof(gname));
+	json_string(body, "icon_url", gicon, sizeof(gicon));
+	/* icon_url arrives percent-encoded like packages (issue #6);
+	 * decode it symmetrically, then make any leftover raw
+	 * whitespace safe for the console installer. */
+	if (gicon[0]) {
+		char icon_dec[512];
+
+		url_decode(gicon, icon_dec, sizeof(icon_dec));
+		url_encode_spaces(icon_dec, gicon, sizeof(gicon));
+	}
+	for (i = 0; i < total; i++) {
+		char url_fixed[URL_MAX];
+
+		if (!json_package_at(body, i, url, sizeof(url)))
+			break;
+		url_encode_spaces(url, url_fixed, sizeof(url_fixed));
+		/* one name/icon can only describe one package; with several,
+		 * each install falls back to its own file name */
+		if (queue_install(url_fixed,
+		                  total == 1 && gname[0] ? gname : NULL,
+		                  total == 1 && gicon[0] ? gicon : NULL) == 0)
+			queued++;
+	}
+	if (queued == total)
+		send_json(fd, "{\"status\":\"success\"}");
+	else if (queued > 0)
+		send_json(fd,
+		    "{\"status\":\"fail\","
+		    "\"error\":\"some packages failed to queue\"}");
+	else
+		send_json(fd,
+		    "{\"status\":\"fail\","
+		    "\"error\":\"queue failed\"}");
 }
 
 void

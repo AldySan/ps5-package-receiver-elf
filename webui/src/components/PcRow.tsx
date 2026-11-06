@@ -7,10 +7,12 @@ interface PcRowProps {
   value: string;
   onSave: (value: string) => void;
   onRefresh: () => void;
+  onAuto: () => void;
 }
 
-/* shown when no PC announced itself, or after clicking the PC pill */
-export function PcRow({ open, value, onSave, onRefresh }: PcRowProps) {
+/* shown when no PC announced itself, after clicking the PC pill, or
+ * when a catalog load failed — the address is usually the fix */
+export function PcRow({ open, value, onSave, onRefresh, onAuto }: PcRowProps) {
   const [text, setText] = React.useState(value);
 
   if (!open) return null;
@@ -31,6 +33,11 @@ export function PcRow({ open, value, onSave, onRefresh }: PcRowProps) {
       <Button onClick={save}>Save</Button>
       <Button variant="secondary" onClick={onRefresh}>
         Refresh
+      </Button>
+      {/* saved addresses stick until this is clicked — the way back to
+       * automatic discovery */}
+      <Button variant="secondary" onClick={onAuto}>
+        Auto
       </Button>
     </div>
   );

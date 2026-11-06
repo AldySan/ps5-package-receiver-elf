@@ -68,6 +68,21 @@ export const api = {
 
   pullCancel: () => fetch("/api/pull/cancel", { method: "POST" }).then(() => {}),
 
-  catalog: (pc: string) =>
-    fetch("http://" + pc + ":9898/catalog").then((r) => r.json()),
+  catalog: (pc: string) => {
+    /* the PC side answers instantly when it is there; a stale address
+     * must not leave the page on "Loading..." for a whole browser
+     * timeout, so bail out after 12 s and let the caller explain */
+    const ctl =
+      typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), 12000) : 0;
+    return fetch(
+      "http://" + pc + ":9898/catalog",
+      ctl ? { signal: ctl.signal } : undefined,
+    )
+      .then(async (r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .finally(() => clearTimeout(timer));
+  },
 };

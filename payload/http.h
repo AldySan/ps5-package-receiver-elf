@@ -14,7 +14,7 @@ void send_png(int fd, const unsigned char *data, size_t len);
 void url_decode(const char *src, char *dst, size_t dst_sz);
 void url_encode_spaces(const char *src, char *dst, size_t dst_sz);
 int  grab_http_url(const char *buf, char *dst, size_t dst_sz);
-int  json_first_package(const char *body, char *dst, size_t dst_sz);
+int  json_package_at(const char *body, int idx, char *dst, size_t dst_sz);
 int  query_url(const char *path, char *dst, size_t dst_sz);
 void json_escape(const char *src, char *dst, size_t dst_sz);
 int  query_param(const char *path, const char *key, char *dst,

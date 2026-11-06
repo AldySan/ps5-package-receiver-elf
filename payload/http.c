@@ -152,30 +152,44 @@ grab_http_url(const char *buf, char *dst, size_t dst_sz)
         return i > 0;
 }
 
-/* "packages" : [ " <url> " ] -> decoded url in dst. */
+/* "packages" : [ " <url> " , ... ] -> decoded url #idx (0-based) in dst.
+ * Returns 1 when that entry exists, 0 otherwise. The array is part of
+ * the wire contract and may carry several packages in one request. */
 int
-json_first_package(const char *body, char *dst, size_t dst_sz)
+json_package_at(const char *body, int idx, char *dst, size_t dst_sz)
 {
         const char *p = strstr(body, "packages");
         char enc[URL_MAX];
-        size_t i = 0;
+        int n;
 
-        if (!p)
+        if (!p || idx < 0)
                 return 0;
         p = strchr(p, '[');
         if (!p)
                 return 0;
-        p = strchr(p, '"');
-        if (!p)
-                return 0;
         p++;
-        while (*p && *p != '"' && i + 1 < sizeof(enc))
-                enc[i++] = *p++;
-        enc[i] = '\0';
-        if (i == 0)
-                return 0;
-        url_decode(enc, dst, dst_sz);
-        return dst[0] != '\0';
+        for (n = 0; n <= idx; n++) {
+                size_t i = 0;
+
+                while (*p == ' ' || *p == '\t' || *p == ',')
+                        p++;
+                if (*p == ']' || *p == '\0')
+                        return 0; /* end of the array */
+                if (*p != '"')
+                        return 0; /* not a string entry */
+                p++;
+                while (*p && *p != '"' && i + 1 < sizeof(enc))
+                        enc[i++] = *p++;
+                if (*p != '"')
+                        return 0; /* unterminated string */
+                p++;
+                if (n == idx) {
+                        enc[i] = '\0';
+                        url_decode(enc, dst, dst_sz);
+                        return dst[0] != '\0';
+                }
+        }
+        return 0;
 }
 
 int

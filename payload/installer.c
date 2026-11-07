@@ -53,25 +53,26 @@ typedef struct playgo_info {
 typedef int (*init_fn)(void);
 typedef int (*install_fn)(const pkg_metadata_t *, pkg_info_t *,
                            playgo_info_t *);
+typedef int (*terminate_fn)(void);
 
 static pthread_mutex_t g_inst_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_inst_ready = 0;
 static void *g_ipmilib;
 static void *g_applib;
+static int g_session_used = 0; /* an InstallByPackage already ran */
 static init_fn p_init;
 static install_fn p_install;
+static terminate_fn p_terminate;
 
-/* 0 = ok, -1 = sprx not found, -2 = symbol not found, else SCE code */
+/* 0 = ok, -1 = sprx not found, -2 = symbol not found, else SCE code.
+ * g_inst_lock must be held. */
 static int
-installer_init(void)
+installer_init_locked(void)
 {
         int rc;
 
-        pthread_mutex_lock(&g_inst_lock);
-        if (g_inst_ready) {
-                pthread_mutex_unlock(&g_inst_lock);
+        if (g_inst_ready)
                 return 0;
-        }
         if (!g_applib) {
                 /* AppInstUtil dies on load unless Ipmi is loaded first
                  * (proven on 6.02 with t_dl3). */
@@ -87,34 +88,69 @@ installer_init(void)
                         g_applib = dlopen(
                             "/system/common/lib/libSceAppInstUtil.sprx",
                             RTLD_LAZY);
-                if (!g_applib) {
-                        pthread_mutex_unlock(&g_inst_lock);
+                if (!g_applib)
                         return -1;
-                }
         }
         if (!p_init) {
                 p_init = (init_fn)dlsym(g_applib,
                     "sceAppInstUtilInitialize");
-                if (!p_init) {
-                        pthread_mutex_unlock(&g_inst_lock);
+                if (!p_init)
                         return -2;
-                }
         }
         if (!p_install) {
                 p_install = (install_fn)dlsym(g_applib,
                     "sceAppInstUtilInstallByPackage");
-                if (!p_install) {
-                        pthread_mutex_unlock(&g_inst_lock);
+                if (!p_install)
                         return -2;
-                }
+        }
+        if (!p_terminate) {
+                /* optional: older sprx may not export it */
+                p_terminate = (terminate_fn)dlsym(g_applib,
+                    "sceAppInstUtilTerminate");
         }
         rc = p_init();
         if (rc == 0)
                 g_inst_ready = 1;
         else
                 notify_user(APP_TAG ": AppInstUtil init failed");
+        return rc;
+}
+
+static int
+installer_init(void)
+{
+        int rc;
+
+        pthread_mutex_lock(&g_inst_lock);
+        rc = installer_init_locked();
         pthread_mutex_unlock(&g_inst_lock);
         return rc;
+}
+
+/* Sony's installer allows one InstallByPackage per initialized session:
+ * a second call in the same session misbehaves from FW 9.60 on, and a
+ * refused call spends the session too (the pkgmgr and ps5upload
+ * projects run every install in a fresh helper process for exactly
+ * this reason). A payload cannot fork, so before every call past the
+ * first the session is rebuilt in place: Terminate, drop the library,
+ * load it fresh (Ipmi stays loaded), Initialize again. */
+static int
+installer_session_locked(void)
+{
+        if (!g_session_used)
+                return installer_init_locked();
+        if (g_inst_ready && p_terminate)
+                p_terminate();
+        g_inst_ready = 0;
+        if (g_applib) {
+                dlclose(g_applib);
+                g_applib = NULL;
+        }
+        p_init = NULL;
+        p_install = NULL;
+        p_terminate = NULL;
+        g_session_used = 0;
+        return installer_init_locked();
 }
 /* ── Home-screen launcher ("PS5 PKG Receiver", Media category) ───────
  * Same idea as owendswang's ps5-web-file-manager (reimplemented here):
@@ -261,6 +297,8 @@ static int g_cur_used[CUR_SLOTS];
 #define STAGE_SERVER (-14)
 #define STAGE_PULL   (-15)
 #define STAGE_GONE   (-16) /* the PC answered "no such package" */
+#define STAGE_FRAME  (-17) /* the body arrived chunk-framed */
+#define STAGE_NOTPKG (-18) /* the staged copy is not a package */
 
 /* staging resilience knobs: a dropped connection is resumed (the PC
  * speaks Range), a stalled one is retried, and progress is toasted */
@@ -332,6 +370,12 @@ install_err_text(int rc, char *buf, size_t sz)
         else if (rc == STAGE_PULL)
                 snprintf(buf, sz, "console did not finish pulling the "
                     "staged package");
+        else if (rc == STAGE_FRAME)
+                snprintf(buf, sz, "the PC sent the package chunk-framed; "
+                    "cannot stage it");
+        else if (rc == STAGE_NOTPKG)
+                snprintf(buf, sz, "the staged file is not a package "
+                    "(corrupted transfer?)");
         else if (c == 0x80A30004u || c == 0x80A3000Au)
                 snprintf(buf, sz, "0x%08X (base game not installed)", c);
         else if (c == 0x80A3000Fu)
@@ -349,8 +393,8 @@ install_err_text(int rc, char *buf, size_t sz)
         else if (c == 0x80A3000Cu)
                 snprintf(buf, sz, "0x%08X (close the game first)", c);
         else if (c == 0x80B22404u)
-                snprintf(buf, sz, "0x%08X (this console refuses installs "
-                    "from a URL, even a local one)", c);
+                snprintf(buf, sz, "0x%08X (the console's downloader got "
+                    "an HTTP 404 fetching the package)", c);
         else if (c == 0x80A30002u)
                 snprintf(buf, sz, "0x%08X (not enough free space)", c);
         else if (c == 0x80A30008u || c == 0x80A30009u)
@@ -389,7 +433,13 @@ call_install_uri(const char *uri, const char *content_name,
         meta.is_playgo_enabled = 0;
 
         pthread_mutex_lock(&g_inst_lock);
-        rc = p_install(&meta, &info, &playgo);
+        rc = installer_session_locked();
+        if (rc == 0) {
+                rc = p_install(&meta, &info, &playgo);
+                /* success or refusal, this session is spent: the next
+                 * call rebuilds it first */
+                g_session_used = 1;
+        }
         pthread_mutex_unlock(&g_inst_lock);
         return rc;
 }
@@ -398,9 +448,14 @@ call_install_uri(const char *uri, const char *content_name,
  * Some firmware refuses an install whose package the console itself has
  * to fetch over the network: sceAppInstUtilInstallByPackage answers an
  * http:// URL with 0x80B22404 (issue #43; the ps5upload project measured
- * the same code on FW 9.60). What the console accepts there is a package
- * served from itself: copy the file to /data, serve it back on a
- * loopback-only listener, and hand Sony that URL instead.
+ * the same code on FW 9.60). That code is a downloader error —
+ * SCE_PLAYGO_ERROR_CORE_HTTP_STATUS_CODE_404 — because Sony's downloader
+ * (ShellCore) probes the URL inside the call: a server that answers the
+ * probe with 404 makes the install fail on the spot, even a loopback
+ * one. What the console accepts there is a package served from itself:
+ * copy the file to /data, serve it back on a loopback-only listener,
+ * and hand Sony that URL instead — routing its probe the way ShellCore
+ * sends it (see lb_serve).
  * Two other forms are deliberately NOT used, both measured by ps5upload
  * on hardware: a plain filesystem path (refused on some firmware, and
  * the one form known to have wiped installed games) and
@@ -410,7 +465,7 @@ static int
 lan_route_refused(int rc)
 {
         switch ((uint32_t)rc) {
-        case 0x80B22404u: /* console rejected the remote-URL install */
+        case 0x80B22404u: /* the downloader got a 404 probing the URL */
         case 0x80431064u: /* its downloader could not reach the PC */
         case 0x80431068u:
         case 0x8041013du:
@@ -445,6 +500,37 @@ stage_name(const char *url, char *out, size_t sz)
         }
         if (n < 4 || strcmp(out + n - 4, ".pkg") != 0)
                 snprintf(out + n, sz - n, ".pkg");
+}
+
+/* "Content-Range: bytes S-E/T" of a 206 answer: S in *start, T in
+ * *total. 0 when the header is absent or unreadable — the caller then
+ * treats the body as untrusted and restarts the copy from zero. */
+static int
+parse_content_range(const char *hdrs, long long *start, long long *total)
+{
+        const char *cr, *b, *slash, *le;
+        char *ep = NULL;
+        long long s, t;
+
+        cr = strcasestr(hdrs, "Content-Range:");
+        if (!cr)
+                return 0;
+        le = strstr(cr, "\r\n"); /* never read past this header line */
+        b = strcasestr(cr, "bytes");
+        if (!b || (le && b > le))
+                return 0;
+        s = strtoll(b + 5, &ep, 10);
+        if (ep == b + 5)
+                return 0;
+        slash = strchr(ep, '/');
+        if (!slash || (le && slash > le))
+                return 0;
+        t = strtoll(slash + 1, NULL, 10);
+        if (t <= 0)
+                return 0;
+        *start = s;
+        *total = t;
+        return 1;
 }
 
 /* sequential GET of one http:// URL into `local`, resumed across dropped
@@ -580,6 +666,16 @@ stage_fetch(const char *url, const char *local, const char *name,
                         rc = STAGE_NET;
                         continue;
                 }
+                if (strcasestr(hs, "Transfer-Encoding:") &&
+                    strcasestr(hs, "chunked")) {
+                        /* a framed body would be staged with its chunk
+                         * size lines mixed into the package bytes; fail
+                         * loudly instead of installing garbage */
+                        close(s);
+                        s = -1;
+                        rc = STAGE_FRAME;
+                        break;
+                }
                 cl = strcasestr(hs, "Content-Length:");
                 if (!cl)
                         cl = strcasestr(hs, "content-length:");
@@ -587,11 +683,51 @@ stage_fetch(const char *url, const char *local, const char *name,
                         long long clv = cl ? strtoll(cl + 15, NULL, 10) : -1;
 
                         if (code == 206 && got > 0) {
-                                /* partial body continues at `got`; the
-                                 * total is only derivable when we already
-                                 * know it or Content-Length says */
+                                /* a resumed body. Where it actually starts
+                                 * is what Content-Range says, not what we
+                                 * asked for: a server may answer any
+                                 * subrange, and writing its bytes at `got`
+                                 * regardless silently corrupts the staged
+                                 * package (right size, wrong bytes — the
+                                 * install then fails only after the whole
+                                 * console-side download). */
+                                long long cs = -1, ct = -1;
+
+                                if (parse_content_range(hs, &cs, &ct) &&
+                                    ct > 0 && want < 0)
+                                        want = ct;
+                                if (cs < 0 || cs > got) {
+                                        /* cannot tell, or a hole we
+                                         * cannot fill: this answer's
+                                         * bytes belong nowhere we can
+                                         * name. Drop it and pull the
+                                         * file from zero on the next
+                                         * attempt — staging the body at
+                                         * offset 0 would only be caught
+                                         * by the magic gate after the
+                                         * whole transfer */
+                                        got = 0;
+                                        reported = 0;
+                                        if (out >= 0 &&
+                                            ftruncate(out, 0) != 0) {
+                                                rc = STAGE_DISK;
+                                                fatal = 1;
+                                        } else {
+                                                close(s);
+                                                s = -1;
+                                                rc = STAGE_NET;
+                                                continue;
+                                        }
+                                } else if (cs < got) {
+                                        /* the server rewound into bytes we
+                                         * already have: write the body
+                                         * where it says it starts */
+                                        got = cs;
+                                }
                                 if (want < 0 && clv > 0)
-                                        want = got + clv;
+                                        want = got + clv; /* fallback
+                                         * when no Content-Range said the
+                                         * total (non-conforming server) */
                         } else {
                                 /* full body from zero. If we asked to
                                  * resume and the server ignored it, start
@@ -710,9 +846,13 @@ stage_fetch(const char *url, const char *local, const char *name,
 }
 
 /* ── loopback-only file server for the staged copy ────────────────────
- * Sony's downloader talks to it like any web server: keep-alive,
- * several parallel connections, HEAD probes and single byte ranges.
- * The response headers are the set the ps5upload project measured Sony
+ * Sony's downloader (ShellCore) talks to it like any web server:
+ * keep-alive, several parallel connections, HEAD probes, single byte
+ * ranges — and it appends "?product=...&serverIpAddr=...&r=..." to
+ * every request it sends. Routing must ignore that query: answering
+ * the probe with 404 makes InstallByPackage fail the whole install
+ * with 0x80B22404 (SCE_PLAYGO_ERROR_CORE_HTTP_STATUS_CODE_404). The
+ * response headers are the set the ps5upload project measured Sony
  * accepting on real consoles (their production loopback install route). */
 typedef struct lb_server {
         int              listen_fd;
@@ -839,7 +979,7 @@ req_header(const char *req, const char *name, char *out, size_t sz)
 static int
 lb_serve(lb_server_t *lb, int conn, char *req)
 {
-        char method[8], target[256], version[16];
+        char method[8], target[300], version[16], route[300];
         char connv[64], rangev[128], hdr[640], d[64], lm[64];
         long long start = 0, end, off;
         const char *cv;
@@ -850,13 +990,23 @@ lb_serve(lb_server_t *lb, int conn, char *req)
         lb->last_ms = mono_ms();
         pthread_mutex_unlock(&lb->lock);
 
-        if (sscanf(req, "%7s %255s %15s", method, target, version) != 3) {
+        if (sscanf(req, "%7s %299s %15s", method, target, version) != 3) {
                 hlen = snprintf(hdr, sizeof(hdr),
                     "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
                     "Connection: close\r\n\r\n");
                 if (hlen > 0)
                         send_all(conn, hdr, (size_t)hlen);
                 return 0;
+        }
+        /* ShellCore appends "?product=...&serverIpAddr=...&r=..." to the
+         * path it was handed; route on the bare path or every real
+         * request — not just probes — would 404 */
+        snprintf(route, sizeof(route), "%s", target);
+        {
+                char *qm = strchr(route, '?');
+
+                if (qm)
+                        *qm = '\0';
         }
         cv = req_header(req, "Connection", connv, sizeof(connv));
         keep = !(cv && strcasestr(connv, "close")) &&
@@ -866,7 +1016,7 @@ lb_serve(lb_server_t *lb, int conn, char *req)
         end = lb->total > 0 ? lb->total - 1 : 0;
 
         if ((strcmp(method, "GET") != 0 && !is_head) ||
-            strcmp(target, lb->name) != 0) {
+            strcmp(route, lb->name) != 0) {
                 hlen = snprintf(hdr, sizeof(hdr),
                     "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
                     "Connection: %s\r\n\r\n", keep ? "keep-alive" : "close");
@@ -1177,6 +1327,30 @@ lb_idle_ms(lb_server_t *lb)
  * and for the console's single download slot */
 static pthread_mutex_t g_stage_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* the staged copy must be an actual package before Sony ever sees it:
+ * a wrong URL, a framed body or a botched resume would otherwise be
+ * handed to the installer and only fail after the console had pulled
+ * every byte — an hour wasted and it looks like a firmware bug */
+static int
+stage_pkg_valid(const char *path)
+{
+        unsigned char m[4];
+        int fd, ok = 0;
+        ssize_t n;
+
+        fd = open(path, O_RDONLY);
+        if (fd < 0)
+                return 0;
+        n = read(fd, m, sizeof(m));
+        if (n == (ssize_t)sizeof(m))
+                ok = (m[0] == 0x7F && m[1] == 'C' && m[2] == 'N' &&
+                    m[3] == 'T') /* PS4/legacy CNT container */ ||
+                    (m[0] == 0x7F && m[1] == 'F' && m[2] == 'I' &&
+                    m[3] == 'H'); /* PS5 native FIH container */
+        close(fd);
+        return ok;
+}
+
 /* The console refused the LAN install: pull the package to /data with
  * our own socket (the direction that already works), then serve it back
  * on loopback and install from there. Keeps the worker busy — and the
@@ -1192,6 +1366,12 @@ staged_install(const char *url, const char *content_name,
         time_t t0;
         int rc, pulled;
 
+        (void)icon_url; /* the loopback install is self-contained: the
+         * package carries its own icon, and an icon_url pointing back
+         * at the PC gives the console one more URL its downloader can
+         * fail to fetch (measured as an install-killer by the pkgmgr
+         * project's offline handling) */
+
         pthread_mutex_lock(&g_stage_lock);
 
         stage_name(url, fname, sizeof(fname));
@@ -1205,6 +1385,11 @@ staged_install(const char *url, const char *content_name,
         rc = stage_fetch(url, stage_path, content_name, &size);
         if (rc != 0)
                 goto out;
+        if (!stage_pkg_valid(stage_path)) {
+                rc = STAGE_NOTPKG;
+                unlink(stage_path);
+                goto out;
+        }
         lb = calloc(1, sizeof(*lb));
         if (!lb) {
                 rc = STAGE_SERVER;
@@ -1219,7 +1404,8 @@ staged_install(const char *url, const char *content_name,
         }
         snprintf(lb_url, sizeof(lb_url), "http://127.0.0.1:%u%s",
             (unsigned)lb->port, url_name);
-        rc = call_install_uri(lb_url, content_name, icon_url);
+        /* icon: empty on purpose — see the (void)icon_url note above */
+        rc = call_install_uri(lb_url, content_name, "");
         if (rc != 0) {
                 lb_stop(lb);
                 unlink(stage_path);

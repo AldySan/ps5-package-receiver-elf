@@ -697,15 +697,26 @@ stage_fetch(const char *url, const char *local, const char *name,
                                     ct > 0 && want < 0)
                                         want = ct;
                                 if (cs < 0 || cs > got) {
-                                        /* cannot tell, or a hole we cannot
-                                         * fill: start over from a clean
-                                         * file rather than guess */
+                                        /* cannot tell, or a hole we
+                                         * cannot fill: this answer's
+                                         * bytes belong nowhere we can
+                                         * name. Drop it and pull the
+                                         * file from zero on the next
+                                         * attempt — staging the body at
+                                         * offset 0 would only be caught
+                                         * by the magic gate after the
+                                         * whole transfer */
                                         got = 0;
                                         reported = 0;
                                         if (out >= 0 &&
                                             ftruncate(out, 0) != 0) {
                                                 rc = STAGE_DISK;
                                                 fatal = 1;
+                                        } else {
+                                                close(s);
+                                                s = -1;
+                                                rc = STAGE_NET;
+                                                continue;
                                         }
                                 } else if (cs < got) {
                                         /* the server rewound into bytes we

@@ -27,7 +27,9 @@ export function FilterBar({ q, onQ, plat, onPlat, kind, onKind }: FilterBarProps
       <div className="relative flex-1 min-w-56">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          type="search"
           className="pl-9"
+          aria-label="Search title or ID"
           placeholder="Search title or ID..."
           value={q}
           onChange={(e) => onQ(e.target.value)}
@@ -42,6 +44,7 @@ export function FilterBar({ q, onQ, plat, onPlat, kind, onKind }: FilterBarProps
             size="lg"
             variant={plat === p ? "default" : "secondary"}
             className={cn(plat !== p && "text-foreground")}
+            aria-pressed={plat === p}
             onClick={() => onPlat(p)}
           >
             {p === "all" ? "All" : p}

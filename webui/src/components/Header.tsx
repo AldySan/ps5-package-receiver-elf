@@ -49,10 +49,14 @@ export function Header({
 }: HeaderProps) {
   return (
     <header className="flex flex-wrap items-center gap-3 pb-1">
+      {/* explicit dimensions so the header cannot shift when the logo
+       * loads; the asset is square (512x512) */}
       <img
         src="/logo.png"
         alt="PKG Sender logo"
-        className="h-11 w-auto rounded-lg"
+        width={44}
+        height={44}
+        className="h-11 w-11 rounded-lg"
       />
       <h1 className="flex-1 text-2xl font-bold leading-tight">
         pkg remote installer

@@ -35,7 +35,7 @@ function versionLine(state: VersionState, build: string | null): string {
     case "match":
       return page + " • receiver " + (build ?? "?");
     case "mismatch":
-      return page + " • receiver " + (build ?? "?") + " • MISMATCH — resend the newest ELF";
+      return page + " • receiver " + (build ?? "?") + " • MISMATCH: resend the newest ELF";
   }
 }
 

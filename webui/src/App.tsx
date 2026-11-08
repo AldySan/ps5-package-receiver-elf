@@ -79,7 +79,7 @@ export default function App() {
       r.setMsg({
         text: r.catalog.length
           ? "No match."
-          : "Library is empty — tick Publish library in PKG Sender.",
+          : "Library is empty. Tick Publish library in PKG Sender.",
         kind: "info",
       });
     } else {
@@ -236,9 +236,10 @@ export default function App() {
                     Total size: {fmtSize(pendingTotal)}
                     {r.space && pendingTotal > 0 && (
                       <span className={notEnough ? "text-destructive" : ""}>
-                        {" "}
-                        — console free: {fmtSize(r.space.free)}
-                        {notEnough && " — NOT ENOUGH SPACE!"}
+                        {" (console free: "}
+                        {fmtSize(r.space.free)}
+                        {notEnough ? ", NOT ENOUGH SPACE!" : ""}
+                        {")"}
                       </span>
                     )}
                   </p>

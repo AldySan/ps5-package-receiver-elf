@@ -57,7 +57,9 @@ export function Header({
       <h1 className="flex-1 text-2xl font-bold leading-tight">
         pkg remote installer
       </h1>
-      <span className="text-xs text-muted-foreground">
+      {/* its own row on narrow screens: full-width basis until md, so
+       * the version line stops floating between logo and pill */}
+      <span className="basis-full text-xs text-muted-foreground md:basis-auto">
         {versionLine(versionState, receiverBuild)}
       </span>
       <Button

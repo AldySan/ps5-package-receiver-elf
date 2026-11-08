@@ -33,7 +33,9 @@ export function FilterBar({ q, onQ, plat, onPlat, kind, onKind }: FilterBarProps
           onChange={(e) => onQ(e.target.value)}
         />
       </div>
-      <div className="flex gap-2">
+      {/* wraps internally on narrow screens: the row is wider than
+       * 320px when it cannot break */}
+      <div className="flex flex-wrap gap-2">
         {PLATS.map((p) => (
           <Button
             key={p}
@@ -48,7 +50,7 @@ export function FilterBar({ q, onQ, plat, onPlat, kind, onKind }: FilterBarProps
       </div>
       {showKind && (
         <Tabs value={kind} onValueChange={(v) => onKind(v as Kind)}>
-          <TabsList className="h-12">
+          <TabsList>
             <TabsTrigger value="games" className="px-5">
               Games
             </TabsTrigger>

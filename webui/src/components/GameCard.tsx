@@ -68,7 +68,10 @@ export function GameCard({ g, pc, addons, onInstall, onOpen }: GameCardProps) {
           <Badge className="bg-foreground text-background">PS5</Badge>
         )}
         {ps4 && (
-          <Badge className="border-transparent text-white" style={{ backgroundColor: "#0070D1" }}>
+          <Badge
+            className="border-transparent text-white"
+            style={{ backgroundColor: "hsl(var(--chip-ps4))" }}
+          >
             PS4
           </Badge>
         )}

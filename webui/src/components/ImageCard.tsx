@@ -11,12 +11,14 @@ interface ImageCardProps {
   onCopy: (g: CatalogEntry) => void;
 }
 
-/* same colors and icons the old page used per image format */
+/* same colors and icons the old page used per image format; colors
+ * come from index.css tokens (--chip-* / --success) so cards and
+ * dialogs cannot drift apart */
 function formatStyle(format: string | undefined) {
-  if (format === "exfat") return { color: "#34B595", label: "EXFAT" };
-  if (format === "ffpfsc") return { color: "#CE9C40", label: "FFPFSC" };
-  if (format === "ffpkg") return { color: "#A27AD8", label: "FFPKG" };
-  return { color: "#6498F0", label: (format || "img").toUpperCase() };
+  if (format === "exfat") return { chip: "hsl(var(--success))", label: "EXFAT" };
+  if (format === "ffpfsc") return { chip: "hsl(var(--chip-ffpfsc))", label: "FFPFSC" };
+  if (format === "ffpkg") return { chip: "hsl(var(--chip-ffpkg))", label: "FFPKG" };
+  return { chip: "hsl(var(--chip-img))", label: (format || "img").toUpperCase() };
 }
 
 function FormatIcon({ format }: { format: string | undefined }) {
@@ -67,8 +69,8 @@ export function ImageCard({ g, pc, onCopy }: ImageCardProps) {
       </h3>
       <p className="mb-2 flex items-center justify-center gap-2 text-sm text-muted-foreground">
         <span
-          className="rounded px-2 py-0.5 text-xs font-bold text-white"
-          style={{ backgroundColor: f.color }}
+          className="rounded px-2 py-0.5 text-xs font-bold"
+          style={{ backgroundColor: f.chip, color: "hsl(var(--chip-fg))" }}
         >
           {f.label}
         </span>

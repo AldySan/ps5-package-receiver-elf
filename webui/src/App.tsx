@@ -163,39 +163,43 @@ export default function App() {
         onAuto={r.useAutoPc}
       />
 
-      <FilterBar
-        q={q}
-        onQ={setQ}
-        plat={plat}
-        onPlat={setPlatAndKind}
-        kind={kind}
-        onKind={setKind}
-      />
+      {/* one main landmark for the primary UI; the header keeps its own
+       * landmark, and the dialogs portal to body outside of it */}
+      <main>
+        <FilterBar
+          q={q}
+          onQ={setQ}
+          plat={plat}
+          onPlat={setPlatAndKind}
+          kind={kind}
+          onKind={setKind}
+        />
 
-      <StatusArea
-        msg={r.msg}
-        bar={r.bar}
-        copyActive={!!r.status?.pull}
-        onPause={() => void r.pauseCopy()}
-        onCancel={() => void r.cancelCopy()}
-      />
+        <StatusArea
+          msg={r.msg}
+          bar={r.bar}
+          copyActive={!!r.status?.pull}
+          onPause={() => void r.pauseCopy()}
+          onCancel={() => void r.cancelCopy()}
+        />
 
-      <div className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-stretch gap-4">
-        {kind === "images"
-          ? list.map((g) => (
-              <ImageCard key={g.id} g={g} pc={r.pc} onCopy={askCopy} />
-            ))
-          : list.map((g) => (
-              <GameCard
-                key={g.id}
-                g={g}
-                pc={r.pc}
-                addons={addonCounts.get(g.familyKey || "") || 0}
-                onInstall={installOne}
-                onOpen={setOpenEntry}
-              />
-            ))}
-      </div>
+        <div className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-stretch gap-4">
+          {kind === "images"
+            ? list.map((g) => (
+                <ImageCard key={g.id} g={g} pc={r.pc} onCopy={askCopy} />
+              ))
+            : list.map((g) => (
+                <GameCard
+                  key={g.id}
+                  g={g}
+                  pc={r.pc}
+                  addons={addonCounts.get(g.familyKey || "") || 0}
+                  onInstall={installOne}
+                  onOpen={setOpenEntry}
+                />
+              ))}
+        </div>
+      </main>
 
       <GameDialog
         entry={openEntry}

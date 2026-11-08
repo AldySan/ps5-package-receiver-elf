@@ -174,7 +174,7 @@ export function useReceiver() {
     const target = manual || (await resolvePc());
     if (!target) {
       setMsg({
-        text: "No PC found — tick Publish library in PKG Sender, or type the PC address.",
+        text: "No PC found. Tick Publish library in PKG Sender, or type the PC address.",
         kind: "info",
       });
       setPcRowOpen(true);
@@ -197,8 +197,8 @@ export function useReceiver() {
         text: slow
           ? "Error: " +
             target +
-            " did not answer — check the address and that Publish library is on."
-          : "Error: " + ex + " — is Publish library on and the PC reachable?",
+            " did not answer. Check the address and that Publish library is on."
+          : "Error: " + ex + ". Is Publish library on and the PC reachable?",
         kind: "err",
       });
       /* the address is the thing to fix — show the input */
@@ -250,7 +250,7 @@ export function useReceiver() {
     async (g: CatalogEntry): Promise<string | null> => {
       const host = pcRef.current;
       if (!host) {
-        setMsg({ text: "No PC address — save one first.", kind: "err" });
+        setMsg({ text: "No PC address. Save one first.", kind: "err" });
         return null;
       }
       const u =
@@ -326,10 +326,10 @@ export function useReceiver() {
       const u = await installOne(g);
       if (!u) return;
       toast.success("Install queued", {
-        description: g.title + " — watch the console notifications.",
+        description: g.title + ". Watch the console notifications.",
       });
       setMsg({
-        text: "ok: install queued for " + g.title + " — watch the console notifications.",
+        text: "ok: install queued for " + g.title + ". Watch the console notifications.",
         kind: "info",
       });
       const s = await watchInstall(u, (st) => {
@@ -341,13 +341,13 @@ export function useReceiver() {
       loadSpace();
       if (!s) {
         setMsg({
-          text: "Lost track of " + g.title + " — check the console.",
+          text: "Lost track of " + g.title + ". Check the console.",
           kind: "err",
         });
         return;
       }
       if (s.lastUrl === u && s.lastOk === false) {
-        const why = s.lastErr ? " — " + s.lastErr : "";
+        const why = s.lastErr ? ": " + s.lastErr : "";
         setMsg({
           text: "Install failed: " + (s.lastName || g.title) + why,
           kind: "err",
@@ -362,13 +362,13 @@ export function useReceiver() {
           text:
             "Still installing " +
             g.title +
-            " — watch the console notifications.",
+            ". Watch the console notifications.",
           kind: "info",
         });
         return;
       }
       setMsg({
-        text: "Done: " + g.title + " — check the console.",
+        text: "Done: " + g.title + ". Check the console.",
         kind: "ok",
       });
       toast.success("Installed", { description: g.title });
@@ -406,7 +406,7 @@ export function useReceiver() {
           setQueue(null);
           setMsg({
             text:
-              "Install queue stopped — could not follow " +
+              "Install queue stopped. Could not follow " +
               list[i].title +
               ". Check the console.",
             kind: "err",
@@ -418,7 +418,7 @@ export function useReceiver() {
           const why = s.lastErr ? ": " + s.lastErr : "";
           setMsg({
             text:
-              "Install queue stopped — " +
+              "Install queue stopped: " +
               (s.lastName || list[i].title) +
               " failed" +
               why +
@@ -442,7 +442,7 @@ export function useReceiver() {
           (list.length - 1) +
           " add-ons" +
           (total > 0 ? " (" + fmtSize(total) + ")" : "") +
-          " — check the console.",
+          ". Check the console.",
         kind: "ok",
       });
       toast.success("Install queue finished", { description: list[0].title });
@@ -477,7 +477,7 @@ export function useReceiver() {
     async (g: CatalogEntry, mode: "overwrite" | "resume") => {
       const host = pcRef.current;
       if (!host) {
-        setMsg({ text: "No PC address — save one first.", kind: "err" });
+        setMsg({ text: "No PC address. Save one first.", kind: "err" });
         return;
       }
       const file = g.file || g.title;
@@ -584,7 +584,7 @@ export function useReceiver() {
           }
           if (ok) {
             setMsg({
-              text: "Done: " + sess.file + " — check the console.",
+              text: "Done: " + sess.file + ". Check the console.",
               kind: "ok",
             });
             toast.success("Copy finished", { description: sess.file });
@@ -593,7 +593,7 @@ export function useReceiver() {
               text:
                 "Copy did not finish: " +
                 sess.file +
-                " — check the console.",
+                ". Check the console.",
               kind: "err",
             });
             toast.error("Copy did not finish", { description: sess.file });
@@ -602,7 +602,7 @@ export function useReceiver() {
         })();
       } else {
         /* a copy somebody else started from elsewhere finished */
-        setMsg({ text: "Copy finished — check the console.", kind: "ok" });
+        setMsg({ text: "Copy finished. Check the console.", kind: "ok" });
       }
     }
   }, [status, loadSpace]);

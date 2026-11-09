@@ -423,8 +423,10 @@ install_err_text(int rc, char *buf, size_t sz)
                     "an HTTP 404 fetching the package)", c);
         else if (c == 0x80B21104u)
                 snprintf(buf, sz, "0x%08X (CE-107872-5: not enough free "
-                    "space on the console storage — free up space and "
-                    "try again)", c);
+                    "space — an install keeps two copies of the package "
+                    "on the console at once, so free about twice its "
+                    "size; with plenty free, the console may be "
+                    "refusing this package build itself)", c);
         else if (c == 0x80A30002u)
                 snprintf(buf, sz, "0x%08X (not enough free space)", c);
         else if (c == 0x80A30008u || c == 0x80A30009u)

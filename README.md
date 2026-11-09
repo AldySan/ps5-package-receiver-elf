@@ -1,4 +1,14 @@
+<p align="center">
+  <img src="payload/logo.png" width="144" alt="PS5 Package Receiver logo" />
+</p>
+
 # PS5 Package Receiver
+
+[![Release](https://img.shields.io/github/v/release/AldySan/ps5-package-receiver-elf)](https://github.com/AldySan/ps5-package-receiver-elf/releases)
+[![Build](https://github.com/AldySan/ps5-package-receiver-elf/actions/workflows/build.yml/badge.svg)](https://github.com/AldySan/ps5-package-receiver-elf/actions/workflows/build.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-PS5_payload_ELF-blueviolet)](#running-it)
+[![PC app](https://img.shields.io/badge/PC_app-ps5--package--sender-2ea043)](https://github.com/AldySan/ps5-package-sender)
 
 A small program that runs on a jailbroken PlayStation 5 and installs game
 packages (`.pkg` files) over your home network — no USB drive needed.
@@ -6,9 +16,9 @@ packages (`.pkg` files) over your home network — no USB drive needed.
 Run it once and it sits on your console, listening on port 12800. From then
 on:
 
-- the **PKG Sender** app on your PC finds the console by itself and sends
+- 💻 the **PKG Sender** app on your PC finds the console by itself and sends
   installs to it, or
-- you open `http://<your-ps5-ip>:12800` in any browser on the same network
+- 🌐 you open `http://<your-ps5-ip>:12800` in any browser on the same network
   and install from there.
 
 Everything you start shows up as notifications on the console — queued,
@@ -25,14 +35,14 @@ so the receiver can be developed and improved on its own. The PC
 application lives upstream; the receiver speaks the same protocol either
 way.
 
-## Requirements
+## 📋 Requirements
 
 - A PS5 that is already jailbroken, i.e. anywhere you can load custom ELF
   payloads today (etaHEN, kstuff, or whatever setup you normally use).
 - A PC (or any machine serving packages) on the same network.
 - No extra setup on the console beyond loading the payload.
 
-## Getting the receiver
+## 📦 Getting the receiver
 
 Easiest: grab a ready-made ELF from the [Releases][releases] page. Each
 release carries:
@@ -46,7 +56,8 @@ Builds in between releases are available from CI: **Actions → build → the
 latest run → Artifacts**. Or build it yourself — see
 [For developers](#for-developers).
 
-## Running it
+<a id="running-it"></a>
+## 🚀 Running it
 
 Load the ELF the same way you load any other PS5 payload. Two common ways:
 
@@ -59,7 +70,7 @@ On startup the console shows a notification such as
 browser or point the PC app at. A previous instance is replaced
 automatically, so re-sending the payload does not need a reboot.
 
-## How installs happen
+## 📥 How installs happen
 
 Installs go through Sony's own installer (`sceAppInstUtilInstallByPackage`),
 the same path a normal download would take. The package can come from:
@@ -93,7 +104,8 @@ while an install is staging).
 
 PS4 packages install the same way; the console handles them natively.
 
-## For developers
+<a id="for-developers"></a>
+## 🛠️ For developers
 
 The receiver is a handful of small C modules in `payload/` (one per
 concern: discovery, HTTP plumbing, per-endpoint handlers, installer,
@@ -227,7 +239,7 @@ payload:
 used for releases and receives a single squashed commit per release, so
 release history stays clean.
 
-## Security notes
+## 🔒 Security notes
 
 The receiver has no authentication: anyone on the network can queue an
 install or write into `/data/homebrew`. That is the same trust model as
@@ -236,7 +248,7 @@ control. File operations are jailed to `/data/homebrew`, and the
 `TEST_ONLY` build exists precisely for testing discovery without exposing
 any write path.
 
-## License
+## 📄 License
 
 This project is licensed under the [GNU GPL v3](LICENSE).
 

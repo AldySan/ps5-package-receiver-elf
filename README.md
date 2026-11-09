@@ -73,7 +73,11 @@ Some firmware refuses the first form — the install is declined with an
 error such as `0x80B22404`. When that happens the receiver retries on its
 own: it downloads the package to a temporary staging folder on the console
 and installs it from a loopback copy, cleaning the staging file up
-afterwards. If that download fails too, the notification says so, and the
+afterwards. That fallback briefly keeps two copies of the package on the
+console (the staged file plus the console's own download of it), so it
+needs roughly twice the package size in free storage — the receiver checks
+this before transferring anything and says how much is free when it
+refuses. If the download fails anyway, the notification says so, and the
 cause is almost always the console not being able to reach the PC — check
 the PC's firewall, VPN or proxy settings and that both machines are on the
 same network.

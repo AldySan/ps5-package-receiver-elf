@@ -59,8 +59,8 @@ h_status(int fd, const char *path, char *body, long body_len)
          * would silently keep the last status forever). The buffer is
          * sized for the worst case: each escaped field can double. */
         char out[3072];
-        char pulln[128], lasturl[512], lastname[128], lasterr[160];
-        char epulln[256], eurl[1024], ename[256], eerr[320];
+        char pulln[128], lasturl[512], lastname[128], lasterr[256];
+        char epulln[256], eurl[1024], ename[256], eerr[512];
         int last_ok;
 
         snprintf(pulln, sizeof(pulln), "%s",

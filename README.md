@@ -72,15 +72,24 @@ the same path a normal download would take. The package can come from:
 Some firmware refuses the first form — the install is declined with an
 error such as `0x80B22404`. When that happens the receiver retries on its
 own: it downloads the package to a temporary staging folder on the console
-and installs it from a loopback copy, cleaning the staging file up
-afterwards. That fallback briefly keeps two copies of the package on the
-console (the staged file plus the console's own download of it), so it
-needs roughly twice the package size in free storage — the receiver checks
-this before transferring anything and says how much is free when it
-refuses. If the download fails anyway, the notification says so, and the
-cause is almost always the console not being able to reach the PC — check
-the PC's firewall, VPN or proxy settings and that both machines are on the
-same network.
+(`/data/homebrew/.pkg-stage`) and installs it from a loopback copy, cleaning
+the staging file up afterwards. That fallback briefly keeps two copies of
+the package on the console (the staged file plus the console's own download
+of it), so it needs roughly twice the package size in free storage — the
+receiver checks this before transferring anything and says how much is free
+when it refuses. If the download fails anyway, the notification says so, and
+the cause is almost always the console not being able to reach the PC —
+check the PC's firewall, VPN or proxy settings and that both machines are on
+the same network.
+
+A run that dies mid-staging (re-sending the payload kills the previous
+instance on purpose, and so does a crash or a power cut) cannot clean its
+own file up, so those orphans are swept on startup — with a notification
+naming what was freed — and again before every staged install. The same
+cleanup is also available on demand: the **Clean** button next to the
+free-space badge in the WebUI, or `POST /api/stage/clear` (answered with
+`{"ok":true,"files":N,"bytes":N}`, or `{"ok":false,"busy":true}`
+while an install is staging).
 
 PS4 packages install the same way; the console handles them natively.
 

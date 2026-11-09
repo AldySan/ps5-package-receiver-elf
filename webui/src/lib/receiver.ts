@@ -518,6 +518,55 @@ export function useReceiver() {
     }
   }, []);
 
+  /* ── staged-leftover cleanup ─────────────────────────────────── */
+
+  /* POST /api/stage/clear: frees the space that runs killed mid-staging
+   * (re-inject, crash, power loss) left in the payload's staging
+   * folder. The boot sweep does the same job silently; this is the
+   * button next to the free-space badge. */
+  const clearStaged = useCallback(async () => {
+    setMsg({ text: "Clearing staged leftovers...", kind: "info" });
+    try {
+      const r = await api.stageClear();
+      if (r.busy) {
+        setMsg({
+          text: "Skipped clearing — an install is running.",
+          kind: "err",
+        });
+        toast.warning("Clear skipped", {
+          description: "an install is in progress — try again after it",
+        });
+        return;
+      }
+      if ((r.bytes ?? 0) > 0) {
+        setMsg({
+          text:
+            "Freed " +
+            fmtSize(r.bytes ?? 0) +
+            " of leftover staged packages.",
+          kind: "ok",
+        });
+        toast.success("Staged leftovers cleared", {
+          description: fmtSize(r.bytes ?? 0) + " freed",
+        });
+      } else {
+        setMsg({ text: "No staged leftovers to clear.", kind: "info" });
+        toast.success("Nothing to clear", {
+          description: "the staging folder is empty",
+        });
+      }
+    } catch {
+      setMsg({
+        text: "Could not clear — receiver too old? Resend the newest ELF.",
+        kind: "err",
+      });
+      toast.error("Clear failed", {
+        description: "old payload? resend the newest ELF",
+      });
+    }
+    loadSpace();
+  }, [loadSpace]);
+
   /* ── the 2-second poll: install state + copy progress ────────────── */
 
   useEffect(() => {
@@ -648,5 +697,6 @@ export function useReceiver() {
     startCopy,
     pauseCopy,
     cancelCopy,
+    clearStaged,
   };
 }

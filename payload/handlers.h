@@ -27,6 +27,7 @@ void h_space(int fd, const char *path, char *body, long body_len);
 void h_install_get(int fd, const char *path, char *body, long body_len);
 void h_install_post(int fd, const char *path, char *body, long body_len);
 void h_upload(int fd, const char *path, char *body, long body_len);
+void h_stage_clear(int fd, const char *path, char *body, long body_len);
 
 /* handlers_files.c — transfer endpoints under /api/files and /api/pull */
 void h_files_stat(int fd, const char *path, char *body, long body_len);

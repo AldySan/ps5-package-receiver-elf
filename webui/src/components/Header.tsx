@@ -1,6 +1,7 @@
 import type { SpaceReply } from "@/lib/types";
 import { fmtSize as fmt } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { Eraser } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -18,6 +19,7 @@ interface HeaderProps {
   pcSource: "auto" | "manual" | "none";
   space: SpaceReply | null;
   onPcPill: () => void;
+  onClearStaged: () => void;
 }
 
 /* "page X • receiver Y" — the page and the payload ELF carry the same
@@ -46,6 +48,7 @@ export function Header({
   pcSource,
   space,
   onPcPill,
+  onClearStaged,
 }: HeaderProps) {
   return (
     <header className="flex flex-wrap items-center gap-3 pb-1">
@@ -88,6 +91,16 @@ export function Header({
           {"Free " + fmt(space.free) + " / " + fmt(space.total)}
         </Badge>
       )}
+      <Button
+        variant="secondary"
+        size="sm"
+        className="whitespace-nowrap rounded-full px-3 text-xs"
+        onClick={onClearStaged}
+        title="Delete leftover staged packages — a payload killed mid-install can leave gigabytes behind"
+        aria-label="Clear leftover staged packages"
+      >
+        <Eraser className="h-4 w-4" aria-hidden="true" /> Clean
+      </Button>
     </header>
   );
 }

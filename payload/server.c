@@ -35,6 +35,9 @@
  *   POST /api/files/pull   {"url":..,"path":..,"mode":..} - PC -> console copy
  *   POST /api/pull/pause {"paused":1|0}   - pause/resume that copy
  *   POST /api/pull/cancel                   stop it, partial file stays
+ *   POST /api/stage/clear - {"ok":..,"files":N,"bytes":N} delete
+ *                          leftover staged packages ("busy":true while
+ *                          a staged install is running)
  *   GET  /logo.png, /favicon.ico - embedded tile logo
  *   Files tab + /api/fs/... : TEMP-DISABLED (see ENABLE_FILES_TAB)
  *
@@ -91,6 +94,7 @@ static const struct route {
         { "POST", "/api/fs/delete",    0, h_fs_delete },
 #endif
         { "POST", "/api/files/pull",   0, h_files_pull },
+        { "POST", "/api/stage/clear",  0, h_stage_clear },
 };
 
 static const struct route *

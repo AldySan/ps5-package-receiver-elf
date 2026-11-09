@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -1366,6 +1367,86 @@ lb_idle_ms(lb_server_t *lb)
  * and for the console's single download slot */
 static pthread_mutex_t g_stage_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* ── Stage-folder hygiene ─────────────────────────────────────────────
+ * Every exit path of a staged install unlinks its file, but a payload
+ * that dies mid-staging cannot: re-injecting SIGKILLs the previous
+ * instance (see main.c), and a freeze or power loss takes the process
+ * down the same way. Whatever those runs left in the staging folder
+ * is an orphan nothing ever deletes — multi-gigabytes of "lost" space
+ * that the next install's space gate then counts against the user.
+ * Both sweep points below run only while no staged install can own a
+ * file (boot, and the start of a staged install under g_stage_lock),
+ * so everything found is an orphan by definition. */
+static long long
+stage_sweep(int *files_out)
+{
+        DIR *d;
+        struct dirent *de;
+        long long freed = 0;
+        int n = 0;
+
+        if (files_out)
+                *files_out = 0;
+        d = opendir(STAGE_DIR);
+        if (!d)
+                return 0;
+        while ((de = readdir(d)) != NULL) {
+                char p[PATH_MAX_V];
+                struct stat st;
+
+                if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
+                        continue;
+                snprintf(p, sizeof(p), "%s/%s", STAGE_DIR, de->d_name);
+                if (stat(p, &st) == 0 && S_ISREG(st.st_mode) &&
+                    unlink(p) == 0) {
+                        freed += (long long)st.st_size;
+                        n++;
+                }
+        }
+        closedir(d);
+        if (files_out)
+                *files_out = n;
+        return freed;
+}
+
+/* the same sweep on demand (POST /api/stage/clear, and boot). A staged
+ * install holds g_stage_lock for its whole run, so a trylock that
+ * fails means one is live and its file must not be touched — refuse
+ * instead of blocking the single-threaded HTTP loop for the length of
+ * a multi-gigabyte install. Returns the bytes freed (with *files_out
+ * counting files), or -1 while an install is in flight. */
+long long
+stage_clear(int *files_out)
+{
+        long long freed;
+
+        if (pthread_mutex_trylock(&g_stage_lock) != 0)
+                return -1;
+        freed = stage_sweep(files_out);
+        pthread_mutex_unlock(&g_stage_lock);
+        return freed;
+}
+
+/* boot-time sweep: whatever the previous instance could not clean.
+ * Say so in a toast — silent multi-gigabyte changes to free space
+ * read as a firmware bug, not as hygiene. */
+void
+stage_sweep_boot(void)
+{
+        int n = 0;
+        long long freed = stage_clear(&n);
+        char toast[160];
+
+        if (freed <= 0)
+                return;
+        snprintf(toast, sizeof(toast),
+            APP_TAG ": cleared %d leftover staged package%s (%lld.%lld GB)",
+            n, n == 1 ? "" : "s",
+            freed / (1LL << 30),
+            (freed % (1LL << 30)) * 10 / (1LL << 30));
+        notify_user(toast);
+}
+
 /* the staged copy must be an actual package before Sony ever sees it:
  * a wrong URL, a framed body or a botched resume would otherwise be
  * handed to the installer and only fail after the console had pulled
@@ -1412,6 +1493,12 @@ staged_install(const char *url, const char *content_name,
          * project's offline handling) */
 
         pthread_mutex_lock(&g_stage_lock);
+
+        /* orphans from an earlier run eat the very space this install
+         * is about to be gated on; the lock makes us the only writer,
+         * so everything in the folder is fair game (silent — the boot
+         * sweep is the loud one) */
+        stage_sweep(NULL);
 
         stage_name(url, fname, sizeof(fname));
         snprintf(url_name, sizeof(url_name), "/%s", fname);

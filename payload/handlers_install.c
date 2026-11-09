@@ -9,7 +9,9 @@
 /* Endpoints that queue a PKG install on the detached worker:
  *   GET  /install?url=  (used by the WebUI buttons, plain-text reply)
  *   POST /api/install   (used by PKG Sender itself, JSON reply)
- *   POST /upload        (multipart form fallback, url field) */
+ *   POST /upload        (multipart form fallback, url field)
+ * plus the staging-folder maintenance endpoint:
+ *   POST /api/stage/clear (delete leftover staged packages, JSON reply) */
 
 static void
 do_install_reply_text(int fd, const char *url, const char *name,
@@ -129,4 +131,22 @@ h_upload(int fd, const char *path, char *body, long body_len)
 	} else {
 		send_text(fd, "FAILED: no url field");
 	}
+}
+
+void
+h_stage_clear(int fd, const char *path, char *body, long body_len)
+{
+	int n = 0;
+	long long freed = stage_clear(&n);
+	char out[128];
+
+	if (freed < 0) {
+		/* an install is staging right now: its file is live and
+		 * must not be swept out from under the downloader */
+		send_json(fd, "{\"ok\":false,\"busy\":true}");
+		return;
+	}
+	snprintf(out, sizeof(out),
+	    "{\"ok\":true,\"files\":%d,\"bytes\":%lld}", n, freed);
+	send_json(fd, out);
 }

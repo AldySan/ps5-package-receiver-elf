@@ -55,6 +55,15 @@ export interface StatReply {
   size: number;
 }
 
+/* POST /api/stage/clear — delete leftover staged packages. busy is
+ * true when a staged install is running (its file is live and stays). */
+export interface StageClearReply {
+  ok: boolean;
+  files?: number;
+  bytes?: number;
+  busy?: boolean;
+}
+
 export type MsgKind = "info" | "ok" | "err";
 
 export interface Msg {

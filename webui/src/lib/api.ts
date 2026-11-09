@@ -5,6 +5,7 @@
 import type {
   PcReply,
   SpaceReply,
+  StageClearReply,
   StatReply,
   StatusReply,
   VersionReply,
@@ -67,6 +68,16 @@ export const api = {
     postJson("/api/pull/pause", { paused: paused ? 1 : 0 }),
 
   pullCancel: () => fetch("/api/pull/cancel", { method: "POST" }).then(() => {}),
+
+  /* POST /api/stage/clear — drop leftover staged packages. Older
+   * payloads answer plain text ("unknown endpoint"), which the JSON
+   * parse below rejects so the caller can say "resend the ELF". */
+  stageClear: async (): Promise<StageClearReply> => {
+    const t = await postJson("/api/stage/clear", {});
+    const j = JSON.parse(t) as StageClearReply;
+    if (typeof j.ok !== "boolean") throw new Error("old payload");
+    return j;
+  },
 
   catalog: (pc: string) => {
     /* the PC side answers instantly when it is there; a stale address

@@ -152,6 +152,7 @@ export default function App() {
         pcSource={r.pcSource}
         space={r.space}
         onPcPill={() => r.setPcRowOpen(!r.pcRowOpen)}
+        onClearStaged={() => void r.clearStaged()}
       />
 
       <PcRow

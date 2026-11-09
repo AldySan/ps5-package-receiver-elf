@@ -307,6 +307,11 @@ static int g_cur_used[CUR_SLOTS];
 #define STAGE_STALL_S   30      /* one recv may stall this long */
 #define STAGE_MIN_STEP  (256LL * 1024 * 1024)
 
+/* headroom on top of the two copies a staged install keeps on /data at
+ * the same time: our staged package plus the console's own download of
+ * it (see the space gate in stage_fetch) */
+#define STAGE_HEADROOM (1024LL * 1024 * 1024)
+
 /* one progress toast per slice of the package: an eighth of it, but at
  * least 256 MiB so small packages still report */
 static long long
@@ -362,9 +367,29 @@ install_err_text(int rc, char *buf, size_t sz)
                 snprintf(buf, sz, "could not write the staged package");
         else if (rc == STAGE_SHORT)
                 snprintf(buf, sz, "staged package is incomplete");
-        else if (rc == STAGE_SPACE)
-                snprintf(buf, sz, "not enough free space to stage the "
-                    "package");
+        else if (rc == STAGE_SPACE) {
+                struct statvfs sv;
+                long long freeb = -1;
+
+                /* say how much is actually free: this failure is disk-
+                 * space arithmetic, and the numbers make the fix obvious */
+                if (statvfs("/data", &sv) == 0)
+                        freeb = (long long)sv.f_bavail * sv.f_frsize;
+                if (freeb >= 0)
+                        snprintf(buf, sz, "not enough free space on the "
+                            "console — a LAN-refused install keeps two "
+                            "copies of the package there and needs about "
+                            "twice its size free (%lld.%lld GB free "
+                            "now); delete something and send again",
+                            freeb / (1LL << 30),
+                            (freeb % (1LL << 30)) * 10 / (1LL << 30));
+                else
+                        snprintf(buf, sz, "not enough free space on the "
+                            "console — a LAN-refused install keeps two "
+                            "copies of the package there and needs about "
+                            "twice its size free; delete something and "
+                            "send again");
+        }
         else if (rc == STAGE_SERVER)
                 snprintf(buf, sz, "local install server failed to start");
         else if (rc == STAGE_PULL)
@@ -395,6 +420,10 @@ install_err_text(int rc, char *buf, size_t sz)
         else if (c == 0x80B22404u)
                 snprintf(buf, sz, "0x%08X (the console's downloader got "
                     "an HTTP 404 fetching the package)", c);
+        else if (c == 0x80B21104u)
+                snprintf(buf, sz, "0x%08X (CE-107872-5: not enough free "
+                    "space on the console storage — free up space and "
+                    "try again)", c);
         else if (c == 0x80A30002u)
                 snprintf(buf, sz, "0x%08X (not enough free space)", c);
         else if (c == 0x80A30008u || c == 0x80A30009u)
@@ -752,12 +781,22 @@ stage_fetch(const char *url, const char *local, const char *name,
                         s = -1;
                         break;
                 }
-                /* only stage what /data can actually hold */
-                if (want > 0 && got == 0 && statvfs("/data", &sv) == 0) {
+                /* only stage what the whole staged install can hold:
+                 * once our copy is down, the console's own downloader
+                 * pulls a second full copy of it from the loopback
+                 * server into its staging area. Both copies sit on the
+                 * same /data volume at the same time, so anything under
+                 * roughly twice the package is guaranteed to die
+                 * mid-install with 0x80B21104 (CE-107872-5, "not enough
+                 * free space") — measured only after a full multi-
+                 * gigabyte pull. A partial copy already occupies `got`
+                 * of that budget, so count it as available; the gate
+                 * runs on every attempt, resume included. */
+                if (want > 0 && statvfs("/data", &sv) == 0) {
                         long long freeb =
                             (long long)sv.f_bavail * sv.f_frsize;
 
-                        if (freeb < want + 64LL * 1024 * 1024) {
+                        if (freeb + got < 2 * want + STAGE_HEADROOM) {
                                 close(s);
                                 s = -1;
                                 rc = STAGE_SPACE;
@@ -1517,7 +1556,7 @@ static pthread_mutex_t g_last_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_last_ok = 0;
 static char g_last_url[512];
 static char g_last_name[128];
-static char g_last_err[160];
+static char g_last_err[256];
 
 static void
 record_last_install(const char *url, int ok, const char *name,
@@ -1548,8 +1587,8 @@ install_worker(void *arg)
 {
         install_job_t *job = arg;
         char name[256];
-        char toast[320];
-        char err[160];
+        char toast[352];
+        char err[256];
         int rc;
 
         __sync_fetch_and_add(&g_active_installs, 1);

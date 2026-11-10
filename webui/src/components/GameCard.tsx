@@ -68,7 +68,10 @@ export function GameCard({ g, pc, addons, onInstall, onOpen }: GameCardProps) {
           <Badge className="bg-foreground text-background">PS5</Badge>
         )}
         {ps4 && (
-          <Badge className="border-transparent text-white" style={{ backgroundColor: "#0070D1" }}>
+          <Badge
+            className="border-transparent text-white"
+            style={{ backgroundColor: "hsl(var(--chip-ps4))" }}
+          >
             PS4
           </Badge>
         )}
@@ -77,10 +80,13 @@ export function GameCard({ g, pc, addons, onInstall, onOpen }: GameCardProps) {
       <h3 className="mb-1 min-h-11 break-words text-base font-semibold leading-snug">
         {g.title}
       </h3>
-      <p className="mb-2 min-h-5 text-sm text-muted-foreground">
+      {/* two lines reserved so every card keeps the same height and
+       * the Install buttons line up; \u00A0 before each bullet keeps it
+       * from ever starting a wrapped line */}
+      <p className="mb-2 min-h-10 text-sm text-muted-foreground">
         {[g.titleId, g.version ? "v" + g.version : "", g.sizeText]
           .filter(Boolean)
-          .join(" \u2022 ")}
+          .join("\u00A0\u2022 ")}
       </p>
       {addons > 0 && (
         <span className="mx-auto mb-2 inline-block rounded-full border border-primary px-3 text-sm font-semibold text-primary">

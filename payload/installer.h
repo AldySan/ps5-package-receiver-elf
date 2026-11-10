@@ -7,6 +7,14 @@
  * 0 = queued, -1 = could not spawn */
 int queue_install(const char *url, const char *name, const char *icon);
 
+/* delete leftover staged packages (a payload killed mid-staging could
+ * not clean up after itself). stage_sweep_boot() is the boot-time pass
+ * and toasts what it freed; stage_clear() is the on-demand pass behind
+ * POST /api/stage/clear — it returns the bytes freed (files in
+ * *files_out), or -1 while a staged install is running. */
+void stage_sweep_boot(void);
+long long stage_clear(int *files_out);
+
 /* outcome of the last finished install, for the status endpoint: the
  * page matches lastUrl against the install it queued and reads the
  * real result from ok/err (busy=false alone cannot tell success from

@@ -158,6 +158,11 @@ main(void)
 	pc_listen_start();
 
 #ifndef TEST_ONLY
+	/* orphaned staged packages from an instance that died mid-staging
+	 * (re-inject SIGKILLs the old one, and so does a crash or power
+	 * loss) eat free space nothing ever gives back — clear them
+	 * now, before the first install's space gate has to count them */
+	stage_sweep_boot();
 	launcher_install_if_needed();
 #endif
 

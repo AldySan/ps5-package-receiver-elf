@@ -35,6 +35,39 @@ so the receiver can be developed and improved on its own. The PC
 application lives upstream; the receiver speaks the same protocol either
 way.
 
+**Jump to:** [Features](#features) · [Requirements](#requirements) ·
+[Getting the receiver](#getting-it) · [Running it](#running-it) ·
+[How installs happen](#installs) · [For developers](#for-developers) ·
+[Contributing](#contributing) · [Support development](#support)
+
+<a id="features"></a>
+## ✨ Features
+
+- **Wireless installs.** Packages travel over your home network; the USB
+  stick stays in the drawer. PS4 packages work too, the console handles
+  them natively.
+- **Sony's own installer.** Games end up on the home screen exactly like a
+  store download, because that is the code path used.
+- **Two ways in.** The [PC app](https://github.com/AldySan/ps5-package-sender)
+  discovers the console by itself, or you use the browser dashboard from
+  your phone — no app needed.
+- **A real dashboard.** Your library with cover art, install progress, a
+  free-space badge, and a Clean button for leftover staging files.
+- **Console notifications** for every step: queued, installing, done or
+  failed.
+- **A home-screen shortcut** ("PS5 PKG Receiver") so the dashboard is one
+  press away.
+- **A safe fallback.** If the console refuses a direct network install,
+  the receiver stages the package itself, after checking that there is
+  room for the two copies an install briefly needs, and cleans up after
+  itself.
+- **Fast, resumable file copies** into `/data/homebrew` over 16 parallel
+  connections, with pause, cancel and resume from either side.
+- **A test-only build** (`pkg-receiver-testonly.elf`) that answers
+  discovery but refuses every install and write — trying things out on
+  your network without any risk.
+
+<a id="requirements"></a>
 ## 📋 Requirements
 
 - A PS5 that is already jailbroken, i.e. anywhere you can load custom ELF
@@ -42,6 +75,7 @@ way.
 - A PC (or any machine serving packages) on the same network.
 - No extra setup on the console beyond loading the payload.
 
+<a id="getting-it"></a>
 ## 📦 Getting the receiver
 
 Easiest: grab a ready-made ELF from the [Releases][releases] page. Each
@@ -70,6 +104,7 @@ On startup the console shows a notification such as
 browser or point the PC app at. A previous instance is replaced
 automatically, so re-sending the payload does not need a reboot.
 
+<a id="installs"></a>
 ## 📥 How installs happen
 
 Installs go through Sony's own installer (`sceAppInstUtilInstallByPackage`),
@@ -107,10 +142,11 @@ PS4 packages install the same way; the console handles them natively.
 <a id="for-developers"></a>
 ## 🛠️ For developers
 
-The receiver is a handful of small C modules in `payload/` (one per
-concern: discovery, HTTP plumbing, per-endpoint handlers, installer,
-file transfers) plus the `webui/` React app for the browser dashboard.
-It provides:
+The receiver is plain C in `payload/` (one small module per concern:
+discovery, HTTP plumbing, per-endpoint handlers, installer, file transfers)
+plus the `webui/` React app for the browser dashboard — React, TypeScript,
+Vite, Tailwind CSS, shadcn/ui and Motion, all built and checked by GitHub
+Actions. It provides:
 
 - an HTTP server on TCP 12800 (WebUI + JSON API),
 - a UDP beacon on port 12801, announcing `PKGSENDER v1 <ip>` every 3 s so
@@ -122,6 +158,24 @@ It provides:
   copies into `/data/homebrew`, with pause/cancel/resume,
 - path jailing for every file operation: writes never leave
   `/data/homebrew`.
+
+### Project layout
+
+```text
+payload/              the receiver itself (plain C)
+├─ main.c             startup, self-replacement, connection loop
+├─ server.c           HTTP routing (one handler per endpoint)
+├─ handlers_*.c       endpoint handlers, split by theme
+├─ installer.c        Sony's installer, staged fallback, home-screen shortcut
+├─ pull.c             segmented copies into /data/homebrew
+├─ files.c            path jailing for every file operation
+├─ discovery.c        LAN beacon + PC announcement listener
+├─ notify.c           console notifications
+├─ webui.c            embeds webui.html into the ELF
+└─ webui.html         the dashboard page, built from webui/
+webui/                dashboard source (React + TypeScript)
+.github/              CI workflows, issue templates, pull-request template
+```
 
 ### Building
 
@@ -144,8 +198,8 @@ toolchain.
 ### The web page (webui/)
 
 The dashboard you open in the browser is a small React + TypeScript app
-(Vite, Tailwind CSS, shadcn/ui components and Motion for animation) in
-the `webui/` folder. The build turns it into **one self-contained HTML
+(Vite, Tailwind CSS, shadcn/ui components and Motion for animation) in the
+`webui/` folder. The build turns it into **one self-contained HTML
 file**, `payload/webui.html`, which is embedded into the ELF as raw bytes
 — so the payload keeps serving the page with no extra files and no Node
 on the console.
@@ -238,6 +292,28 @@ payload:
 `dev` is the working branch; all pull requests target it. `main` is only
 used for releases and receives a single squashed commit per release, so
 release history stays clean.
+
+<a id="contributing"></a>
+## 🤝 Contributing
+
+Issues and pull requests are welcome, including first-time ones. Bug
+reports and feature requests come with templates that ask for the useful
+bits, and [CONTRIBUTING.md](CONTRIBUTING.md) walks through the setup, the
+coding style and the review flow — no prior PS5 experience needed. All
+interactions in this project are covered by the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+<a id="support"></a>
+## 💙 Support development
+
+If the receiver saved you an evening of USB sticks and slow copies:
+
+- ⭐ **Star the repository.** It genuinely helps other PS5 owners find it.
+- 💬 **Share it** with someone still moving packages around by hand.
+- ☕ **[Buy the maintainer a coffee](https://ko-fi.com/aldysan)** — every
+  one keeps the payloads coming.
+
+No pressure either way: the receiver is free and stays free.
 
 ## 🔒 Security notes
 

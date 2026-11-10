@@ -1,0 +1,85 @@
+name: Bug report
+description: Something went wrong on the console or in the dashboard.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report it! The more of this you can
+        fill in, the faster it can be looked at. Photos of the TV screen
+        are welcome.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A short description of the problem, and what you expected to happen instead.
+      placeholder: The install reached 100% and then failed, even though the console had plenty of free space.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can it be reproduced?
+      description: Step by step, starting from loading the payload.
+      placeholder: |
+        1. Loaded pkg-receiver.elf (etaHEN payloads folder)
+        2. Opened http://192.168.1.42:12800 in the PS5 browser
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: build-tag
+    attributes:
+      label: Receiver build tag
+      description: Shown in the console notification when the receiver starts, e.g. "PS5 PKG Receiver 20261108-01".
+      placeholder: PS5 PKG Receiver 20261108-01
+    validations:
+      required: true
+
+  - type: input
+    id: console
+    attributes:
+      label: Console model and firmware
+      description: For example "PS5 Pro, firmware 10.40" (Settings → System → System Software).
+      placeholder: PS5 Pro, FW 10.40
+    validations:
+      required: true
+
+  - type: dropdown
+    id: loader
+    attributes:
+      label: Payload loader
+      options:
+        - etaHEN
+        - kstuff
+        - Other (described above)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: method
+    attributes:
+      label: How was it started?
+      options:
+        - PC app (ps5-package-sender)
+        - Browser dashboard (http://<ps5-ip>:12800)
+        - My own script (HTTP API)
+    validations:
+      required: true
+
+  - type: input
+    id: error-code
+    attributes:
+      label: Error code or on-screen message
+      description: For example 0x80B21104 / CE-107872-5, or the text of the notification.
+      placeholder: 0x80B21104 (CE-107872-5)
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Screenshots, what you already tried, whether it happens every time. Anything unusual about the network (VPN on the PC, mesh Wi-Fi, ...) is useful too.

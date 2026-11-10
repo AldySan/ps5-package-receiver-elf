@@ -1,0 +1,37 @@
+name: Feature request
+description: An idea for the receiver or the browser dashboard.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us what you are trying to do. The best features start with
+        the problem, not the solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do, and what gets in the way?
+      placeholder: I install packages from two different PCs, but the receiver only remembers the last one that announced itself.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like it to do instead?
+      placeholder: It would be great if the dashboard showed every PC it has heard from recently, so I could pick between them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you have tried
+      description: Optional.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Optional. Links, screenshots, or how other tools handle it.

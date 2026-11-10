@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: PC app (ps5-package-sender)
+    url: https://github.com/AldySan/ps5-package-sender/issues
+    about: Problems with the PC application belong in its own repository.

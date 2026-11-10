@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -307,6 +308,11 @@ static int g_cur_used[CUR_SLOTS];
 #define STAGE_STALL_S   30      /* one recv may stall this long */
 #define STAGE_MIN_STEP  (256LL * 1024 * 1024)
 
+/* headroom on top of the two copies a staged install keeps on /data at
+ * the same time: our staged package plus the console's own download of
+ * it (see the space gate in stage_fetch) */
+#define STAGE_HEADROOM (1024LL * 1024 * 1024)
+
 /* one progress toast per slice of the package: an eighth of it, but at
  * least 256 MiB so small packages still report */
 static long long
@@ -362,9 +368,29 @@ install_err_text(int rc, char *buf, size_t sz)
                 snprintf(buf, sz, "could not write the staged package");
         else if (rc == STAGE_SHORT)
                 snprintf(buf, sz, "staged package is incomplete");
-        else if (rc == STAGE_SPACE)
-                snprintf(buf, sz, "not enough free space to stage the "
-                    "package");
+        else if (rc == STAGE_SPACE) {
+                struct statvfs sv;
+                long long freeb = -1;
+
+                /* say how much is actually free: this failure is disk-
+                 * space arithmetic, and the numbers make the fix obvious */
+                if (statvfs("/data", &sv) == 0)
+                        freeb = (long long)sv.f_bavail * sv.f_frsize;
+                if (freeb >= 0)
+                        snprintf(buf, sz, "not enough free space on the "
+                            "console — a LAN-refused install keeps two "
+                            "copies of the package there and needs about "
+                            "twice its size free (%lld.%lld GB free "
+                            "now); delete something and send again",
+                            freeb / (1LL << 30),
+                            (freeb % (1LL << 30)) * 10 / (1LL << 30));
+                else
+                        snprintf(buf, sz, "not enough free space on the "
+                            "console — a LAN-refused install keeps two "
+                            "copies of the package there and needs about "
+                            "twice its size free; delete something and "
+                            "send again");
+        }
         else if (rc == STAGE_SERVER)
                 snprintf(buf, sz, "local install server failed to start");
         else if (rc == STAGE_PULL)
@@ -395,6 +421,12 @@ install_err_text(int rc, char *buf, size_t sz)
         else if (c == 0x80B22404u)
                 snprintf(buf, sz, "0x%08X (the console's downloader got "
                     "an HTTP 404 fetching the package)", c);
+        else if (c == 0x80B21104u)
+                snprintf(buf, sz, "0x%08X (CE-107872-5: not enough free "
+                    "space — an install keeps two copies of the package "
+                    "on the console at once, so free about twice its "
+                    "size; with plenty free, the console may be "
+                    "refusing this package build itself)", c);
         else if (c == 0x80A30002u)
                 snprintf(buf, sz, "0x%08X (not enough free space)", c);
         else if (c == 0x80A30008u || c == 0x80A30009u)
@@ -752,12 +784,22 @@ stage_fetch(const char *url, const char *local, const char *name,
                         s = -1;
                         break;
                 }
-                /* only stage what /data can actually hold */
-                if (want > 0 && got == 0 && statvfs("/data", &sv) == 0) {
+                /* only stage what the whole staged install can hold:
+                 * once our copy is down, the console's own downloader
+                 * pulls a second full copy of it from the loopback
+                 * server into its staging area. Both copies sit on the
+                 * same /data volume at the same time, so anything under
+                 * roughly twice the package is guaranteed to die
+                 * mid-install with 0x80B21104 (CE-107872-5, "not enough
+                 * free space") — measured only after a full multi-
+                 * gigabyte pull. A partial copy already occupies `got`
+                 * of that budget, so count it as available; the gate
+                 * runs on every attempt, resume included. */
+                if (want > 0 && statvfs("/data", &sv) == 0) {
                         long long freeb =
                             (long long)sv.f_bavail * sv.f_frsize;
 
-                        if (freeb < want + 64LL * 1024 * 1024) {
+                        if (freeb + got < 2 * want + STAGE_HEADROOM) {
                                 close(s);
                                 s = -1;
                                 rc = STAGE_SPACE;
@@ -1327,6 +1369,86 @@ lb_idle_ms(lb_server_t *lb)
  * and for the console's single download slot */
 static pthread_mutex_t g_stage_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* ── Stage-folder hygiene ─────────────────────────────────────────────
+ * Every exit path of a staged install unlinks its file, but a payload
+ * that dies mid-staging cannot: re-injecting SIGKILLs the previous
+ * instance (see main.c), and a freeze or power loss takes the process
+ * down the same way. Whatever those runs left in the staging folder
+ * is an orphan nothing ever deletes — multi-gigabytes of "lost" space
+ * that the next install's space gate then counts against the user.
+ * Both sweep points below run only while no staged install can own a
+ * file (boot, and the start of a staged install under g_stage_lock),
+ * so everything found is an orphan by definition. */
+static long long
+stage_sweep(int *files_out)
+{
+        DIR *d;
+        struct dirent *de;
+        long long freed = 0;
+        int n = 0;
+
+        if (files_out)
+                *files_out = 0;
+        d = opendir(STAGE_DIR);
+        if (!d)
+                return 0;
+        while ((de = readdir(d)) != NULL) {
+                char p[PATH_MAX_V];
+                struct stat st;
+
+                if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, ".."))
+                        continue;
+                snprintf(p, sizeof(p), "%s/%s", STAGE_DIR, de->d_name);
+                if (stat(p, &st) == 0 && S_ISREG(st.st_mode) &&
+                    unlink(p) == 0) {
+                        freed += (long long)st.st_size;
+                        n++;
+                }
+        }
+        closedir(d);
+        if (files_out)
+                *files_out = n;
+        return freed;
+}
+
+/* the same sweep on demand (POST /api/stage/clear, and boot). A staged
+ * install holds g_stage_lock for its whole run, so a trylock that
+ * fails means one is live and its file must not be touched — refuse
+ * instead of blocking the single-threaded HTTP loop for the length of
+ * a multi-gigabyte install. Returns the bytes freed (with *files_out
+ * counting files), or -1 while an install is in flight. */
+long long
+stage_clear(int *files_out)
+{
+        long long freed;
+
+        if (pthread_mutex_trylock(&g_stage_lock) != 0)
+                return -1;
+        freed = stage_sweep(files_out);
+        pthread_mutex_unlock(&g_stage_lock);
+        return freed;
+}
+
+/* boot-time sweep: whatever the previous instance could not clean.
+ * Say so in a toast — silent multi-gigabyte changes to free space
+ * read as a firmware bug, not as hygiene. */
+void
+stage_sweep_boot(void)
+{
+        int n = 0;
+        long long freed = stage_clear(&n);
+        char toast[160];
+
+        if (freed <= 0)
+                return;
+        snprintf(toast, sizeof(toast),
+            APP_TAG ": cleared %d leftover staged package%s (%lld.%lld GB)",
+            n, n == 1 ? "" : "s",
+            freed / (1LL << 30),
+            (freed % (1LL << 30)) * 10 / (1LL << 30));
+        notify_user(toast);
+}
+
 /* the staged copy must be an actual package before Sony ever sees it:
  * a wrong URL, a framed body or a botched resume would otherwise be
  * handed to the installer and only fail after the console had pulled
@@ -1373,6 +1495,12 @@ staged_install(const char *url, const char *content_name,
          * project's offline handling) */
 
         pthread_mutex_lock(&g_stage_lock);
+
+        /* orphans from an earlier run eat the very space this install
+         * is about to be gated on; the lock makes us the only writer,
+         * so everything in the folder is fair game (silent — the boot
+         * sweep is the loud one) */
+        stage_sweep(NULL);
 
         stage_name(url, fname, sizeof(fname));
         snprintf(url_name, sizeof(url_name), "/%s", fname);
@@ -1517,7 +1645,7 @@ static pthread_mutex_t g_last_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_last_ok = 0;
 static char g_last_url[512];
 static char g_last_name[128];
-static char g_last_err[160];
+static char g_last_err[256];
 
 static void
 record_last_install(const char *url, int ok, const char *name,
@@ -1548,8 +1676,8 @@ install_worker(void *arg)
 {
         install_job_t *job = arg;
         char name[256];
-        char toast[320];
-        char err[160];
+        char toast[352];
+        char err[256];
         int rc;
 
         __sync_fetch_and_add(&g_active_installs, 1);

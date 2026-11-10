@@ -35,6 +35,17 @@
     --success: 165 55% 45%;         /* #34B595 */
     --warn: 36 73% 59%;             /* #E8A34C */
 
+    /* chip colors for image formats and the PS4 platform badge. The
+     * exfat / patch / dlc chips reuse --success / --destructive / --warn
+     * on purpose: one token change moves both. Text on every chip is
+     * --chip-fg, which clears WCAG AA on all of them (white text failed
+     * the audit); the PS4 badge keeps white (4.95:1). */
+    --chip-ffpfsc: 39 59% 53%;      /* #CE9C40 */
+    --chip-ffpkg: 266 55% 66%;      /* ~#A27AD8 */
+    --chip-img: 218 82% 67%;        /* ~#6498F0 */
+    --chip-ps4: 208 100% 41%;       /* #0070D1 */
+    --chip-fg: 0 0% 9%;             /* #171717 */
+
     --border: 0 0% 18%;             /* #2E2E2E */
     --input: 0 0% 16.5%;
     --ring: 218 91% 64%;

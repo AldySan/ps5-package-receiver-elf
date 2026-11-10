@@ -27,19 +27,24 @@ export function FilterBar({ q, onQ, plat, onPlat, kind, onKind }: FilterBarProps
       <div className="relative flex-1 min-w-56">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          type="search"
           className="pl-9"
+          aria-label="Search title or ID"
           placeholder="Search title or ID..."
           value={q}
           onChange={(e) => onQ(e.target.value)}
         />
       </div>
-      <div className="flex gap-2">
+      {/* wraps internally on narrow screens: the row is wider than
+       * 320px when it cannot break */}
+      <div className="flex flex-wrap gap-2">
         {PLATS.map((p) => (
           <Button
             key={p}
             size="lg"
             variant={plat === p ? "default" : "secondary"}
             className={cn(plat !== p && "text-foreground")}
+            aria-pressed={plat === p}
             onClick={() => onPlat(p)}
           >
             {p === "all" ? "All" : p}
@@ -48,7 +53,7 @@ export function FilterBar({ q, onQ, plat, onPlat, kind, onKind }: FilterBarProps
       </div>
       {showKind && (
         <Tabs value={kind} onValueChange={(v) => onKind(v as Kind)}>
-          <TabsList className="h-12">
+          <TabsList>
             <TabsTrigger value="games" className="px-5">
               Games
             </TabsTrigger>

@@ -18,11 +18,27 @@ interface GameDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/* role chips: text is --chip-fg (dark), which clears WCAG AA on these
+ * lighter colors where white text failed the audit */
 function roleBadge(role: string | undefined) {
   if (role === "Patch")
-    return <Badge className="border-transparent text-white" style={{ backgroundColor: "#E17B7B" }}>Patch</Badge>;
+    return (
+      <Badge
+        className="border-transparent"
+        style={{ backgroundColor: "hsl(var(--destructive))", color: "hsl(var(--chip-fg))" }}
+      >
+        Patch
+      </Badge>
+    );
   if (role === "DLC")
-    return <Badge className="border-transparent text-white" style={{ backgroundColor: "#E8A34C" }}>DLC</Badge>;
+    return (
+      <Badge
+        className="border-transparent"
+        style={{ backgroundColor: "hsl(var(--warn))", color: "hsl(var(--chip-fg))" }}
+      >
+        DLC
+      </Badge>
+    );
   /* a member without a role still gets a readable chip, not an empty one */
   return <Badge>{role || "Add-on"}</Badge>;
 }
@@ -90,7 +106,7 @@ export function GameDialog({
                 {entry.platform === "PS4" && (
                   <Badge
                     className="border-transparent text-white"
-                    style={{ backgroundColor: "#0070D1" }}
+                    style={{ backgroundColor: "hsl(var(--chip-ps4))" }}
                   >
                     PS4
                   </Badge>

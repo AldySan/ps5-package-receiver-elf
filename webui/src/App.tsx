@@ -79,7 +79,7 @@ export default function App() {
       r.setMsg({
         text: r.catalog.length
           ? "No match."
-          : "Library is empty — tick Publish library in PKG Sender.",
+          : "Library is empty. Tick Publish library in PKG Sender.",
         kind: "info",
       });
     } else {
@@ -152,6 +152,7 @@ export default function App() {
         pcSource={r.pcSource}
         space={r.space}
         onPcPill={() => r.setPcRowOpen(!r.pcRowOpen)}
+        onClearStaged={() => void r.clearStaged()}
       />
 
       <PcRow
@@ -163,39 +164,43 @@ export default function App() {
         onAuto={r.useAutoPc}
       />
 
-      <FilterBar
-        q={q}
-        onQ={setQ}
-        plat={plat}
-        onPlat={setPlatAndKind}
-        kind={kind}
-        onKind={setKind}
-      />
+      {/* one main landmark for the primary UI; the header keeps its own
+       * landmark, and the dialogs portal to body outside of it */}
+      <main>
+        <FilterBar
+          q={q}
+          onQ={setQ}
+          plat={plat}
+          onPlat={setPlatAndKind}
+          kind={kind}
+          onKind={setKind}
+        />
 
-      <StatusArea
-        msg={r.msg}
-        bar={r.bar}
-        copyActive={!!r.status?.pull}
-        onPause={() => void r.pauseCopy()}
-        onCancel={() => void r.cancelCopy()}
-      />
+        <StatusArea
+          msg={r.msg}
+          bar={r.bar}
+          copyActive={!!r.status?.pull}
+          onPause={() => void r.pauseCopy()}
+          onCancel={() => void r.cancelCopy()}
+        />
 
-      <div className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-stretch gap-4">
-        {kind === "images"
-          ? list.map((g) => (
-              <ImageCard key={g.id} g={g} pc={r.pc} onCopy={askCopy} />
-            ))
-          : list.map((g) => (
-              <GameCard
-                key={g.id}
-                g={g}
-                pc={r.pc}
-                addons={addonCounts.get(g.familyKey || "") || 0}
-                onInstall={installOne}
-                onOpen={setOpenEntry}
-              />
-            ))}
-      </div>
+        <div className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] items-stretch gap-4">
+          {kind === "images"
+            ? list.map((g) => (
+                <ImageCard key={g.id} g={g} pc={r.pc} onCopy={askCopy} />
+              ))
+            : list.map((g) => (
+                <GameCard
+                  key={g.id}
+                  g={g}
+                  pc={r.pc}
+                  addons={addonCounts.get(g.familyKey || "") || 0}
+                  onInstall={installOne}
+                  onOpen={setOpenEntry}
+                />
+              ))}
+        </div>
+      </main>
 
       <GameDialog
         entry={openEntry}
@@ -236,9 +241,10 @@ export default function App() {
                     Total size: {fmtSize(pendingTotal)}
                     {r.space && pendingTotal > 0 && (
                       <span className={notEnough ? "text-destructive" : ""}>
-                        {" "}
-                        — console free: {fmtSize(r.space.free)}
-                        {notEnough && " — NOT ENOUGH SPACE!"}
+                        {" (console free: "}
+                        {fmtSize(r.space.free)}
+                        {notEnough ? ", NOT ENOUGH SPACE!" : ""}
+                        {")"}
                       </span>
                     )}
                   </p>

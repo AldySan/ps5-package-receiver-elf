@@ -23,6 +23,7 @@ export function PcRow({ open, value, onSave, onRefresh, onAuto }: PcRowProps) {
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <Input
         className="flex-1 min-w-52"
+        aria-label="PC address"
         placeholder="PC address"
         value={text}
         onChange={(e) => setText(e.target.value)}

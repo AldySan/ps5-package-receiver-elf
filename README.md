@@ -1,4 +1,14 @@
+<p align="center">
+  <img src="payload/logo.png" width="144" alt="PS5 Package Receiver logo" />
+</p>
+
 # PS5 Package Receiver
+
+[![Release](https://img.shields.io/github/v/release/AldySan/ps5-package-receiver-elf)](https://github.com/AldySan/ps5-package-receiver-elf/releases)
+[![Build](https://github.com/AldySan/ps5-package-receiver-elf/actions/workflows/build.yml/badge.svg)](https://github.com/AldySan/ps5-package-receiver-elf/actions/workflows/build.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-PS5_payload_ELF-blueviolet)](#running-it)
+[![PC app](https://img.shields.io/badge/PC_app-ps5--package--sender-2ea043)](https://github.com/AldySan/ps5-package-sender)
 
 A small program that runs on a jailbroken PlayStation 5 and installs game
 packages (`.pkg` files) over your home network — no USB drive needed.
@@ -6,9 +16,9 @@ packages (`.pkg` files) over your home network — no USB drive needed.
 Run it once and it sits on your console, listening on port 12800. From then
 on:
 
-- the **PKG Sender** app on your PC finds the console by itself and sends
+- 💻 the **PKG Sender** app on your PC finds the console by itself and sends
   installs to it, or
-- you open `http://<your-ps5-ip>:12800` in any browser on the same network
+- 🌐 you open `http://<your-ps5-ip>:12800` in any browser on the same network
   and install from there.
 
 Everything you start shows up as notifications on the console — queued,
@@ -25,14 +35,48 @@ so the receiver can be developed and improved on its own. The PC
 application lives upstream; the receiver speaks the same protocol either
 way.
 
-## Requirements
+**Jump to:** [Features](#features) · [Requirements](#requirements) ·
+[Getting the receiver](#getting-it) · [Running it](#running-it) ·
+[How installs happen](#installs) · [For developers](#for-developers) ·
+[Contributing](#contributing) · [Support development](#support)
+
+<a id="features"></a>
+## ✨ Features
+
+- **Wireless installs.** Packages travel over your home network; the USB
+  stick stays in the drawer. PS4 packages work too, the console handles
+  them natively.
+- **Sony's own installer.** Games end up on the home screen exactly like a
+  store download, because that is the code path used.
+- **Two ways in.** The [PC app](https://github.com/AldySan/ps5-package-sender)
+  discovers the console by itself, or you use the browser dashboard from
+  your phone — no app needed.
+- **A real dashboard.** Your library with cover art, install progress, a
+  free-space badge, and a Clean button for leftover staging files.
+- **Console notifications** for every step: queued, installing, done or
+  failed.
+- **A home-screen shortcut** ("PS5 PKG Receiver") so the dashboard is one
+  press away.
+- **A safe fallback.** If the console refuses a direct network install,
+  the receiver stages the package itself, after checking that there is
+  room for the two copies an install briefly needs, and cleans up after
+  itself.
+- **Fast, resumable file copies** into `/data/homebrew` over 16 parallel
+  connections, with pause, cancel and resume from either side.
+- **A test-only build** (`pkg-receiver-testonly.elf`) that answers
+  discovery but refuses every install and write — trying things out on
+  your network without any risk.
+
+<a id="requirements"></a>
+## 📋 Requirements
 
 - A PS5 that is already jailbroken, i.e. anywhere you can load custom ELF
   payloads today (etaHEN, kstuff, or whatever setup you normally use).
 - A PC (or any machine serving packages) on the same network.
 - No extra setup on the console beyond loading the payload.
 
-## Getting the receiver
+<a id="getting-it"></a>
+## 📦 Getting the receiver
 
 Easiest: grab a ready-made ELF from the [Releases][releases] page. Each
 release carries:
@@ -46,7 +90,8 @@ Builds in between releases are available from CI: **Actions → build → the
 latest run → Artifacts**. Or build it yourself — see
 [For developers](#for-developers).
 
-## Running it
+<a id="running-it"></a>
+## 🚀 Running it
 
 Load the ELF the same way you load any other PS5 payload. Two common ways:
 
@@ -59,7 +104,8 @@ On startup the console shows a notification such as
 browser or point the PC app at. A previous instance is replaced
 automatically, so re-sending the payload does not need a reboot.
 
-## How installs happen
+<a id="installs"></a>
+## 📥 How installs happen
 
 Installs go through Sony's own installer (`sceAppInstUtilInstallByPackage`),
 the same path a normal download would take. The package can come from:
@@ -72,20 +118,35 @@ the same path a normal download would take. The package can come from:
 Some firmware refuses the first form — the install is declined with an
 error such as `0x80B22404`. When that happens the receiver retries on its
 own: it downloads the package to a temporary staging folder on the console
-and installs it from a loopback copy, cleaning the staging file up
-afterwards. If that download fails too, the notification says so, and the
-cause is almost always the console not being able to reach the PC — check
-the PC's firewall, VPN or proxy settings and that both machines are on the
-same network.
+(`/data/homebrew/.pkg-stage`) and installs it from a loopback copy, cleaning
+the staging file up afterwards. That fallback briefly keeps two copies of
+the package on the console (the staged file plus the console's own download
+of it), so it needs roughly twice the package size in free storage — the
+receiver checks this before transferring anything and says how much is free
+when it refuses. If the download fails anyway, the notification says so, and
+the cause is almost always the console not being able to reach the PC —
+check the PC's firewall, VPN or proxy settings and that both machines are on
+the same network.
+
+A run that dies mid-staging (re-sending the payload kills the previous
+instance on purpose, and so does a crash or a power cut) cannot clean its
+own file up, so those orphans are swept on startup — with a notification
+naming what was freed — and again before every staged install. The same
+cleanup is also available on demand: the **Clean** button next to the
+free-space badge in the WebUI, or `POST /api/stage/clear` (answered with
+`{"ok":true,"files":N,"bytes":N}`, or `{"ok":false,"busy":true}`
+while an install is staging).
 
 PS4 packages install the same way; the console handles them natively.
 
-## For developers
+<a id="for-developers"></a>
+## 🛠️ For developers
 
-The receiver is a handful of small C modules in `payload/` (one per
-concern: discovery, HTTP plumbing, per-endpoint handlers, installer,
-file transfers) plus the `webui/` React app for the browser dashboard.
-It provides:
+The receiver is plain C in `payload/` (one small module per concern:
+discovery, HTTP plumbing, per-endpoint handlers, installer, file transfers)
+plus the `webui/` React app for the browser dashboard — React, TypeScript,
+Vite, Tailwind CSS, shadcn/ui and Motion, all built and checked by GitHub
+Actions. It provides:
 
 - an HTTP server on TCP 12800 (WebUI + JSON API),
 - a UDP beacon on port 12801, announcing `PKGSENDER v1 <ip>` every 3 s so
@@ -97,6 +158,24 @@ It provides:
   copies into `/data/homebrew`, with pause/cancel/resume,
 - path jailing for every file operation: writes never leave
   `/data/homebrew`.
+
+### Project layout
+
+```text
+payload/              the receiver itself (plain C)
+├─ main.c             startup, self-replacement, connection loop
+├─ server.c           HTTP routing (one handler per endpoint)
+├─ handlers_*.c       endpoint handlers, split by theme
+├─ installer.c        Sony's installer, staged fallback, home-screen shortcut
+├─ pull.c             segmented copies into /data/homebrew
+├─ files.c            path jailing for every file operation
+├─ discovery.c        LAN beacon + PC announcement listener
+├─ notify.c           console notifications
+├─ webui.c            embeds webui.html into the ELF
+└─ webui.html         the dashboard page, built from webui/
+webui/                dashboard source (React + TypeScript)
+.github/              CI workflows, issue templates, pull-request template
+```
 
 ### Building
 
@@ -119,8 +198,8 @@ toolchain.
 ### The web page (webui/)
 
 The dashboard you open in the browser is a small React + TypeScript app
-(Vite, Tailwind CSS, shadcn/ui components and Motion for animation) in
-the `webui/` folder. The build turns it into **one self-contained HTML
+(Vite, Tailwind CSS, shadcn/ui components and Motion for animation) in the
+`webui/` folder. The build turns it into **one self-contained HTML
 file**, `payload/webui.html`, which is embedded into the ELF as raw bytes
 — so the payload keeps serving the page with no extra files and no Node
 on the console.
@@ -214,7 +293,29 @@ payload:
 used for releases and receives a single squashed commit per release, so
 release history stays clean.
 
-## Security notes
+<a id="contributing"></a>
+## 🤝 Contributing
+
+Issues and pull requests are welcome, including first-time ones. Bug
+reports and feature requests come with templates that ask for the useful
+bits, and [CONTRIBUTING.md](CONTRIBUTING.md) walks through the setup, the
+coding style and the review flow — no prior PS5 experience needed. All
+interactions in this project are covered by the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+<a id="support"></a>
+## 💙 Support development
+
+If the receiver saved you an evening of USB sticks and slow copies:
+
+- ⭐ **Star the repository.** It genuinely helps other PS5 owners find it.
+- 💬 **Share it** with someone still moving packages around by hand.
+- ☕ **[Buy the maintainer a coffee](https://ko-fi.com/aldysan)** — every
+  one keeps the payloads coming.
+
+No pressure either way: the receiver is free and stays free.
+
+## 🔒 Security notes
 
 The receiver has no authentication: anyone on the network can queue an
 install or write into `/data/homebrew`. That is the same trust model as
@@ -223,7 +324,7 @@ control. File operations are jailed to `/data/homebrew`, and the
 `TEST_ONLY` build exists precisely for testing discovery without exposing
 any write path.
 
-## License
+## 📄 License
 
 This project is licensed under the [GNU GPL v3](LICENSE).
 

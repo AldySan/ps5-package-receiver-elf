@@ -11,7 +11,41 @@ permissions:
   contents: write
 
 jobs:
+  # Validate WebUI before building and uploading release binaries.
+  webui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: webui
+
+      # Typechecks and rebuilds payload/webui.html from committed sources.
+      - name: Build and embed
+        run: npm run build:embed
+        working-directory: webui
+
+      # Ensure committed embedded HTML matches the source.
+      - name: Check embedded page is up to date
+        run: |
+          if ! git diff --quiet -- payload/webui.html; then
+            echo "payload/webui.html is stale; run 'npm run build:embed' in webui/ and commit it"
+            git diff --stat -- payload/webui.html
+            exit 1
+          fi
+
+  # Build and attach binaries only after WebUI validation succeeds.
   attach-binaries:
+    needs: webui
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

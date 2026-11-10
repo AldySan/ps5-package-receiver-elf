@@ -1,6 +1,7 @@
 import type { SpaceReply } from "@/lib/types";
 import { fmtSize as fmt } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { Eraser } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -18,6 +19,7 @@ interface HeaderProps {
   pcSource: "auto" | "manual" | "none";
   space: SpaceReply | null;
   onPcPill: () => void;
+  onClearStaged: () => void;
 }
 
 /* "page X • receiver Y" — the page and the payload ELF carry the same
@@ -35,7 +37,7 @@ function versionLine(state: VersionState, build: string | null): string {
     case "match":
       return page + " • receiver " + (build ?? "?");
     case "mismatch":
-      return page + " • receiver " + (build ?? "?") + " • MISMATCH — resend the newest ELF";
+      return page + " • receiver " + (build ?? "?") + " • MISMATCH: resend the newest ELF";
   }
 }
 
@@ -46,18 +48,25 @@ export function Header({
   pcSource,
   space,
   onPcPill,
+  onClearStaged,
 }: HeaderProps) {
   return (
     <header className="flex flex-wrap items-center gap-3 pb-1">
+      {/* explicit dimensions so the header cannot shift when the logo
+       * loads; the asset is square (512x512) */}
       <img
         src="/logo.png"
         alt="PKG Sender logo"
-        className="h-11 w-auto rounded-lg"
+        width={44}
+        height={44}
+        className="h-11 w-11 rounded-lg"
       />
       <h1 className="flex-1 text-2xl font-bold leading-tight">
         pkg remote installer
       </h1>
-      <span className="text-xs text-muted-foreground">
+      {/* its own row on narrow screens: full-width basis until md, so
+       * the version line stops floating between logo and pill */}
+      <span className="basis-full text-xs text-muted-foreground md:basis-auto">
         {versionLine(versionState, receiverBuild)}
       </span>
       <Button
@@ -82,6 +91,16 @@ export function Header({
           {"Free " + fmt(space.free) + " / " + fmt(space.total)}
         </Badge>
       )}
+      <Button
+        variant="secondary"
+        size="sm"
+        className="whitespace-nowrap rounded-full px-3 text-xs"
+        onClick={onClearStaged}
+        title="Delete leftover staged packages — a payload killed mid-install can leave gigabytes behind"
+        aria-label="Clear leftover staged packages"
+      >
+        <Eraser className="h-4 w-4" aria-hidden="true" /> Clean
+      </Button>
     </header>
   );
 }

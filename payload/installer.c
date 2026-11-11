@@ -1692,15 +1692,84 @@ static char g_last_url[512];
 static char g_last_name[128];
 static char g_last_err[256];
 
+/* the record is kept in memory for /api/status and mirrored to
+ * /data/homebrew: a receiver that is re-injected (or crashes, or loses
+ * power) mid-flight comes back with no memory of the install it ran,
+ * and a PC watching its queue then cannot tell a dead install from a
+ * finished one. The write lands in a temp file renamed into place, so
+ * a power cut can never leave a torn record behind. */
+#define LAST_INSTALL_FILE "/data/homebrew/.pkg-receiver-last-install"
+#define LAST_INSTALL_TMP  LAST_INSTALL_FILE ".tmp"
+
+/* g_last_lock must be held. */
 static void
-record_last_install(const char *url, int ok, const char *name,
+last_install_set_locked(const char *url, int ok, const char *name,
     const char *err)
 {
-        pthread_mutex_lock(&g_last_lock);
         g_last_ok = ok;
         snprintf(g_last_url, sizeof(g_last_url), "%s", url ? url : "");
         snprintf(g_last_name, sizeof(g_last_name), "%s", name ? name : "");
         snprintf(g_last_err, sizeof(g_last_err), "%s", err ? err : "");
+}
+
+static void
+record_last_install(const char *url, int ok, const char *name,
+    const char *err)
+{
+        char eurl[1024], ename[256], eerr[512], line[2048];
+        int wrote;
+        size_t len;
+        FILE *f;
+
+        pthread_mutex_lock(&g_last_lock);
+        last_install_set_locked(url, ok, name, err);
+        pthread_mutex_unlock(&g_last_lock);
+
+        json_escape(url ? url : "", eurl, sizeof(eurl));
+        json_escape(name ? name : "", ename, sizeof(ename));
+        json_escape(err ? err : "", eerr, sizeof(eerr));
+        wrote = snprintf(line, sizeof(line),
+            "{\"ok\":%d,\"url\":\"%s\",\"name\":\"%s\",\"err\":\"%s\"}\n",
+            ok ? 1 : 0, eurl, ename, eerr);
+        if (wrote < 0 || (size_t)wrote >= sizeof(line))
+                return; /* would have been torn; keep the previous record */
+        len = (size_t)wrote;
+        f = fopen(LAST_INSTALL_TMP, "w");
+        if (!f)
+                return;
+        if (fwrite(line, 1, len, f) == len)
+                rename(LAST_INSTALL_TMP, LAST_INSTALL_FILE);
+        else
+                unlink(LAST_INSTALL_TMP);
+        fclose(f);
+}
+
+/* boot-time reload of the record persisted above. Best effort: a
+ * missing, unreadable or unparseable record leaves the receiver as it
+ * was, exactly as before this file existed. */
+void
+install_last_restore(void)
+{
+        char buf[2048], url[512], name[128], err[256];
+        long long ok = 0;
+        size_t n;
+        FILE *f;
+
+        f = fopen(LAST_INSTALL_FILE, "r");
+        if (!f)
+                return;
+        n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        if (n == 0)
+                return;
+        buf[n] = '\0';
+        if (!json_string(buf, "url", url, sizeof(url)) || !url[0])
+                return;
+        json_string(buf, "name", name, sizeof(name));
+        json_string(buf, "err", err, sizeof(err));
+        json_long(buf, "ok", &ok);
+        pthread_mutex_lock(&g_last_lock);
+        last_install_set_locked(url, ok != 0, name, err);
         pthread_mutex_unlock(&g_last_lock);
 }
 

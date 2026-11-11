@@ -327,7 +327,11 @@ job_begin(const char *url, const char *name)
 #define LB_MAX_CONNS  16
 #define LB_REQ_MAX    8192
 #define LB_IO_S       60
-#define LB_FIRST_S    60
+/* the console may queue the staged pull behind another download for a
+ * while before its first fetch: declaring the install dead while it is
+ * merely waiting unlinks the staged package under a live intent, so the
+ * first byte is given three minutes to arrive */
+#define LB_FIRST_S   180
 #define LB_IDLE_S     300
 #define LB_GRACE_S    30
 #define LB_PULL_CAP_S 7200

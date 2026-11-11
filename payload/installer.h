@@ -22,6 +22,13 @@ long long stage_clear(int *files_out);
 void install_last_result(int *ok, char *url, size_t url_sz,
     char *name, size_t name_sz, char *err, size_t err_sz);
 
+/* live progress of the running install, for /api/status: 0 = none,
+ * 1 = the console fetches the package itself, 2 = staging to /data,
+ * 3 = the console is copying the staged package. got/want are the
+ * bytes of whichever leg is moving (0/-1 when the leg is unknown). */
+void install_job_progress(int *phase, long long *got, long long *want,
+    char *name, size_t name_sz, char *url, size_t url_sz);
+
 #ifndef TEST_ONLY
 /* stage + register the home-screen launcher (best effort) */
 void launcher_install_if_needed(void);

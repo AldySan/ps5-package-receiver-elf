@@ -281,6 +281,46 @@ static pthread_mutex_t g_cur_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_cur_urls[CUR_SLOTS][URL_MAX];
 static int g_cur_used[CUR_SLOTS];
 
+/* live progress of the install job currently running, published on
+ * /api/status: a staged install moves the package twice (our staging
+ * pull from the PC, then the console's own copy from the loopback
+ * server) and the sender can only count the first hop by itself.
+ * One slot for the whole payload: installs are serialized per URL, and
+ * a second install stacking onto the first simply replaces the slot
+ * until the jobs clear it — readers match by url and ignore a job that
+ * is not theirs. */
+#define JOBP_CONSOLE 1 /* the console fetches the package itself */
+#define JOBP_STAGE   2 /* we are staging the package to /data */
+#define JOBP_COPY    3 /* the console copies the staged package */
+static pthread_mutex_t g_job_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_job_phase = 0;
+static long long g_job_got = 0;
+static long long g_job_want = 0;
+static char g_job_name[128];
+static char g_job_url[512];
+
+static void
+job_set(int phase, long long got, long long want)
+{
+        pthread_mutex_lock(&g_job_lock);
+        g_job_phase = phase;
+        g_job_got = got;
+        g_job_want = want;
+        pthread_mutex_unlock(&g_job_lock);
+}
+
+static void
+job_begin(const char *url, const char *name)
+{
+        pthread_mutex_lock(&g_job_lock);
+        g_job_phase = JOBP_CONSOLE;
+        g_job_got = 0;
+        g_job_want = 0;
+        snprintf(g_job_url, sizeof(g_job_url), "%s", url ? url : "");
+        snprintf(g_job_name, sizeof(g_job_name), "%s", name ? name : "");
+        pthread_mutex_unlock(&g_job_lock);
+}
+
 /* staged local install: knobs and our own error codes (below -2) */
 #define STAGE_DIR     "/data/homebrew/.pkg-stage"
 #define STAGE_CHUNK   (1024 * 1024)
@@ -857,6 +897,7 @@ stage_fetch(const char *url, const char *local, const char *name,
                         if (fatal)
                                 break;
                         got += n;
+                        job_set(JOBP_STAGE, got, want);
                         if (name && got - reported >= step) {
                                 stage_progress("staging", name, got, want);
                                 reported = got;
@@ -1509,6 +1550,7 @@ staged_install(const char *url, const char *content_name,
         snprintf(toast, sizeof(toast),
             APP_TAG ": LAN install refused, staging %s", content_name);
         notify_user(toast);
+        job_set(JOBP_STAGE, 0, 0);
 
         rc = stage_fetch(url, stage_path, content_name, &size);
         if (rc != 0)
@@ -1539,6 +1581,7 @@ staged_install(const char *url, const char *content_name,
                 unlink(stage_path);
                 goto out;
         }
+        job_set(JOBP_COPY, 0, lb->total);
         /* the console pulls the file from us now: serve until it has all of
          * it, or is clearly not coming back — and keep the user posted,
          * this phase is as long as the download was */
@@ -1564,6 +1607,7 @@ staged_install(const char *url, const char *content_name,
                             lb->total);
                         lb_reported = served;
                 }
+                job_set(JOBP_COPY, served, lb->total);
                 sleep(1);
         }
         if (!pulled && lb_served_bytes(lb) >= lb->total)
@@ -1624,6 +1668,7 @@ installer_install(const char *path, const char *want_name,
         if (rc)
                 return rc;
 
+        job_begin(path, name_out);
         rc = call_install_uri(uri, name_out,
             (want_icon && *want_icon) ? want_icon : "");
         if (rc == 0)
@@ -1671,6 +1716,22 @@ install_last_result(int *ok, char *url, size_t url_sz, char *name,
         pthread_mutex_unlock(&g_last_lock);
 }
 
+/* live progress of the running install, for /api/status: phase 0 idle,
+ * JOBP_CONSOLE the console fetches the package itself, JOBP_STAGE we
+ * are staging it, JOBP_COPY the console is copying the staged one */
+void
+install_job_progress(int *phase, long long *got, long long *want,
+    char *name, size_t name_sz, char *url, size_t url_sz)
+{
+        pthread_mutex_lock(&g_job_lock);
+        *phase = g_job_phase;
+        *got = g_job_got;
+        *want = g_job_want;
+        snprintf(name, name_sz, "%s", g_job_name);
+        snprintf(url, url_sz, "%s", g_job_url);
+        pthread_mutex_unlock(&g_job_lock);
+}
+
 static void *
 install_worker(void *arg)
 {
@@ -1684,6 +1745,7 @@ install_worker(void *arg)
         rc = installer_install(job->url,
             job->name[0] ? job->name : NULL,
             job->icon[0] ? job->icon : NULL, name, sizeof(name));
+        job_set(0, 0, 0);
 
         if (rc == 0) {
                 snprintf(toast, sizeof(toast), APP_TAG ": installing %s", name);

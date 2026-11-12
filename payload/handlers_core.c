@@ -63,13 +63,13 @@ h_status(int fd, const char *path, char *body, long body_len)
         char instn[128], insturl[512];
         char epulln[256], eurl[1024], ename[256], eerr[512];
         char einstn[256], einsturl[1024];
-        int last_ok, inst_phase;
+        int last_ok, last_final, inst_phase;
         long long inst_got, inst_want;
 
         snprintf(pulln, sizeof(pulln), "%s",
             pull_active() ? pull_name() : "");
         json_escape(pulln, epulln, sizeof(epulln));
-        install_last_result(&last_ok, lasturl, sizeof(lasturl),
+        install_last_result(&last_ok, &last_final, lasturl, sizeof(lasturl),
             lastname, sizeof(lastname), lasterr, sizeof(lasterr));
         json_escape(lasturl, eurl, sizeof(eurl));
         json_escape(lastname, ename, sizeof(ename));
@@ -84,7 +84,7 @@ h_status(int fd, const char *path, char *body, long body_len)
             "\"pullGot\":%lld,\"pullWant\":%lld,\"pullPaused\":%s,"
             "\"instPhase\":%d,\"instName\":\"%s\",\"instUrl\":\"%s\","
             "\"instGot\":%lld,\"instWant\":%lld,"
-            "\"lastOk\":%s,\"lastUrl\":\"%s\","
+            "\"lastOk\":%s,\"lastFinal\":%s,\"lastUrl\":\"%s\","
             "\"lastName\":\"%s\",\"lastErr\":\"%s\"}",
             g_active_installs > 0 ? "true" : "false",
             g_active_installs,
@@ -96,6 +96,7 @@ h_status(int fd, const char *path, char *body, long body_len)
             einstn, einsturl,
             inst_got, inst_want,
             last_ok ? "true" : "false",
+            last_final ? "true" : "false",
             eurl, ename, eerr);
         send_json(fd, out);
 }

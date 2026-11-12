@@ -18,10 +18,16 @@ long long stage_clear(int *files_out);
 /* outcome of the last finished install, for the status endpoint: the
  * page matches lastUrl against the install it queued and reads the
  * real result from ok/err (busy=false alone cannot tell success from
- * failure). ok is 1 = succeeded. The record is mirrored to
+ * failure). ok is 1 = succeeded. final is 0 for a direct install that
+ * the console merely ACCEPTED (its downloader owns the job from here
+ * and never reports back — the record is a progress note, not a
+ * verdict) and 1 for a definitive outcome: a refused install, a
+ * staged install whose whole package the console has already pulled,
+ * or any hard error. Readers must not report "installed" to the user
+ * on a non-final record. The record is mirrored to
  * /data/homebrew and reloaded at boot by install_last_restore(), so a
  * receiver restart between two status polls does not erase it. */
-void install_last_result(int *ok, char *url, size_t url_sz,
+void install_last_result(int *ok, int *final, char *url, size_t url_sz,
     char *name, size_t name_sz, char *err, size_t err_sz);
 void install_last_restore(void);
 

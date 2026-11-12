@@ -1625,17 +1625,28 @@ out:
 }
 
 /* returns 0 on success, SCE error code otherwise (negative codes are
- * ours: -1/-2 dlopen failures, STAGE_* from the staged fallback) */
+ * ours: -1/-2 dlopen failures, STAGE_* from the staged fallback).
+ * *final_out (may be NULL) says whether that outcome is definitive:
+ * sceAppInstUtilInstallByPackage only queues the download — when it
+ * accepts an http:// URL the console's downloader owns the job and
+ * never reports back, so a 0 from the direct path is an ACCEPT, not
+ * a finish (final 0). The staged fallback instead serves until the
+ * console has pulled the whole copy, so its 0 (and every non-zero
+ * rc) is definitive (final 1). */
 static int
 installer_install(const char *path, const char *want_name,
                   const char *want_icon,
-                  char *name_out, size_t name_sz)
+                  char *name_out, size_t name_sz, int *final_out)
 {
         char local[URL_MAX + 32];
         const char *uri = path;
         const char *base;
         int rc;
 
+        /* default: definitive (every failure below is a real outcome;
+         * only the direct accept path overrides this with 0) */
+        if (final_out)
+                *final_out = 1;
         if (!path || !*path)
                 return -1;
 
@@ -1675,23 +1686,42 @@ installer_install(const char *path, const char *want_name,
         job_begin(path, name_out);
         rc = call_install_uri(uri, name_out,
             (want_icon && *want_icon) ? want_icon : "");
-        if (rc == 0)
+        if (rc == 0) {
+                /* the console took the job: its downloader fetches the
+                 * package after we return, and nothing tells us how that
+                 * ends — this is an accept, not an outcome */
+                if (final_out)
+                        *final_out = 0;
                 return 0;
+        }
         /* The console refused to fetch the package itself (issue #43:
          * 0x80B22404 on firmware that gates remote-URL installs). Pull it
          * over here and install it from a loopback copy instead. */
-        if (!strncmp(path, "http://", 7) && lan_route_refused(rc))
+        if (!strncmp(path, "http://", 7) && lan_route_refused(rc)) {
+                /* staged_install serves until the console has the whole
+                 * copy or has clearly given up, so whatever comes back
+                 * out of it is definitive */
+                if (final_out)
+                        *final_out = 1;
                 return staged_install(path, name_out,
                     (want_icon && *want_icon) ? want_icon : "");
+        }
+        /* refused by the console installer itself: definitive */
+        if (final_out)
+                *final_out = 1;
         return rc;
 }
 
 /* the last finished install, served by /api/status: an idle console
  * looks the same whether the install succeeded or failed, so the page
  * matches lastUrl against the install it queued and reads the outcome
- * from ok/name/err. */
+ * from ok/name/err. final separates a real outcome from a direct
+ * install the console merely accepted (the downloader owns the job
+ * after the call returns and never reports back, so that record can
+ * only ever be a progress note, never a verdict). */
 static pthread_mutex_t g_last_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_last_ok = 0;
+static int g_last_final = 0;
 static char g_last_url[512];
 static char g_last_name[128];
 static char g_last_err[256];
@@ -1707,17 +1737,18 @@ static char g_last_err[256];
 
 /* g_last_lock must be held. */
 static void
-last_install_set_locked(const char *url, int ok, const char *name,
+last_install_set_locked(const char *url, int ok, int final, const char *name,
     const char *err)
 {
         g_last_ok = ok;
+        g_last_final = final;
         snprintf(g_last_url, sizeof(g_last_url), "%s", url ? url : "");
         snprintf(g_last_name, sizeof(g_last_name), "%s", name ? name : "");
         snprintf(g_last_err, sizeof(g_last_err), "%s", err ? err : "");
 }
 
 static void
-record_last_install(const char *url, int ok, const char *name,
+record_last_install(const char *url, int ok, int final, const char *name,
     const char *err)
 {
         char eurl[1024], ename[256], eerr[512], line[2048];
@@ -1726,15 +1757,15 @@ record_last_install(const char *url, int ok, const char *name,
         FILE *f;
 
         pthread_mutex_lock(&g_last_lock);
-        last_install_set_locked(url, ok, name, err);
+        last_install_set_locked(url, ok, final, name, err);
         pthread_mutex_unlock(&g_last_lock);
 
         json_escape(url ? url : "", eurl, sizeof(eurl));
         json_escape(name ? name : "", ename, sizeof(ename));
         json_escape(err ? err : "", eerr, sizeof(eerr));
         wrote = snprintf(line, sizeof(line),
-            "{\"ok\":%d,\"url\":\"%s\",\"name\":\"%s\",\"err\":\"%s\"}\n",
-            ok ? 1 : 0, eurl, ename, eerr);
+            "{\"ok\":%d,\"final\":%d,\"url\":\"%s\",\"name\":\"%s\",\"err\":\"%s\"}\n",
+            ok ? 1 : 0, final ? 1 : 0, eurl, ename, eerr);
         if (wrote < 0 || (size_t)wrote >= sizeof(line))
                 return; /* would have been torn; keep the previous record */
         len = (size_t)wrote;
@@ -1755,7 +1786,7 @@ void
 install_last_restore(void)
 {
         char buf[2048], url[512], name[128], err[256];
-        long long ok = 0;
+        long long ok = 0, final = 0;
         size_t n;
         FILE *f;
 
@@ -1772,17 +1803,22 @@ install_last_restore(void)
         json_string(buf, "name", name, sizeof(name));
         json_string(buf, "err", err, sizeof(err));
         json_long(buf, "ok", &ok);
+        /* a record from an older payload has no "final": treat it as
+         * non-final so a restoring reader never mistakes an accepted
+         * install for a finished one */
+        json_long(buf, "final", &final);
         pthread_mutex_lock(&g_last_lock);
-        last_install_set_locked(url, ok != 0, name, err);
+        last_install_set_locked(url, ok != 0, final != 0, name, err);
         pthread_mutex_unlock(&g_last_lock);
 }
 
 void
-install_last_result(int *ok, char *url, size_t url_sz, char *name,
-    size_t name_sz, char *err, size_t err_sz)
+install_last_result(int *ok, int *final, char *url, size_t url_sz,
+    char *name, size_t name_sz, char *err, size_t err_sz)
 {
         pthread_mutex_lock(&g_last_lock);
         *ok = g_last_ok;
+        *final = g_last_final;
         snprintf(url, url_sz, "%s", g_last_url);
         snprintf(name, name_sz, "%s", g_last_name);
         snprintf(err, err_sz, "%s", g_last_err);
@@ -1812,12 +1848,12 @@ install_worker(void *arg)
         char name[256];
         char toast[352];
         char err[256];
-        int rc;
+        int rc, final = 1;
 
         __sync_fetch_and_add(&g_active_installs, 1);
         rc = installer_install(job->url,
             job->name[0] ? job->name : NULL,
-            job->icon[0] ? job->icon : NULL, name, sizeof(name));
+            job->icon[0] ? job->icon : NULL, name, sizeof(name), &final);
         job_set(0, 0, 0);
 
         if (rc == 0) {
@@ -1828,7 +1864,7 @@ install_worker(void *arg)
                     install_err_text(rc, err, sizeof(err)));
         }
         notify_user(toast);
-        record_last_install(job->url, rc == 0, name, err);
+        record_last_install(job->url, rc == 0, final, name, err);
         __sync_fetch_and_sub(&g_active_installs, 1);
         /* release the duplicate guard so a retry can run */
         pthread_mutex_lock(&g_cur_lock);

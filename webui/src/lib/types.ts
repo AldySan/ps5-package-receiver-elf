@@ -25,8 +25,12 @@ export interface StatusReply {
   pullPaused: boolean;
   /* outcome of the last finished install. Newer payloads only: absent
    * on older ones, where "idle" was all the page could ever see. The
-   * page matches lastUrl against the install it queued. */
+   * page matches lastUrl against the install it queued. lastFinal is
+   * false for a direct install the console merely ACCEPTED (its
+   * downloader owns the job and never reports back) — the page must
+   * not call that "installed", only a final record is a verdict. */
   lastOk?: boolean;
+  lastFinal?: boolean;
   lastUrl?: string;
   lastName?: string;
   lastErr?: string;

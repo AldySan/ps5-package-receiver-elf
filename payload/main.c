@@ -157,6 +157,11 @@ main(void)
 	beacon_start();
 	pc_listen_start();
 
+	/* the last-install record survives restarts (installer.c): reload
+	 * it before the first /api/status can be polled, so a re-injected
+	 * receiver does not come back reporting nothing */
+	install_last_restore();
+
 #ifndef TEST_ONLY
 	/* orphaned staged packages from an instance that died mid-staging
 	 * (re-inject SIGKILLs the old one, and so does a crash or power

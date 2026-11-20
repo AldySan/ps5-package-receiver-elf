@@ -281,13 +281,57 @@ static pthread_mutex_t g_cur_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_cur_urls[CUR_SLOTS][URL_MAX];
 static int g_cur_used[CUR_SLOTS];
 
+/* live progress of the install job currently running, published on
+ * /api/status: a staged install moves the package twice (our staging
+ * pull from the PC, then the console's own copy from the loopback
+ * server) and the sender can only count the first hop by itself.
+ * One slot for the whole payload: installs are serialized per URL, and
+ * a second install stacking onto the first simply replaces the slot
+ * until the jobs clear it — readers match by url and ignore a job that
+ * is not theirs. */
+#define JOBP_CONSOLE 1 /* the console fetches the package itself */
+#define JOBP_STAGE   2 /* we are staging the package to /data */
+#define JOBP_COPY    3 /* the console copies the staged package */
+static pthread_mutex_t g_job_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_job_phase = 0;
+static long long g_job_got = 0;
+static long long g_job_want = 0;
+static char g_job_name[128];
+static char g_job_url[512];
+
+static void
+job_set(int phase, long long got, long long want)
+{
+        pthread_mutex_lock(&g_job_lock);
+        g_job_phase = phase;
+        g_job_got = got;
+        g_job_want = want;
+        pthread_mutex_unlock(&g_job_lock);
+}
+
+static void
+job_begin(const char *url, const char *name)
+{
+        pthread_mutex_lock(&g_job_lock);
+        g_job_phase = JOBP_CONSOLE;
+        g_job_got = 0;
+        g_job_want = 0;
+        snprintf(g_job_url, sizeof(g_job_url), "%s", url ? url : "");
+        snprintf(g_job_name, sizeof(g_job_name), "%s", name ? name : "");
+        pthread_mutex_unlock(&g_job_lock);
+}
+
 /* staged local install: knobs and our own error codes (below -2) */
 #define STAGE_DIR     "/data/homebrew/.pkg-stage"
 #define STAGE_CHUNK   (1024 * 1024)
 #define LB_MAX_CONNS  16
 #define LB_REQ_MAX    8192
 #define LB_IO_S       60
-#define LB_FIRST_S    60
+/* the console may queue the staged pull behind another download for a
+ * while before its first fetch: declaring the install dead while it is
+ * merely waiting unlinks the staged package under a live intent, so the
+ * first byte is given three minutes to arrive */
+#define LB_FIRST_S   180
 #define LB_IDLE_S     300
 #define LB_GRACE_S    30
 #define LB_PULL_CAP_S 7200
@@ -857,6 +901,7 @@ stage_fetch(const char *url, const char *local, const char *name,
                         if (fatal)
                                 break;
                         got += n;
+                        job_set(JOBP_STAGE, got, want);
                         if (name && got - reported >= step) {
                                 stage_progress("staging", name, got, want);
                                 reported = got;
@@ -1509,6 +1554,7 @@ staged_install(const char *url, const char *content_name,
         snprintf(toast, sizeof(toast),
             APP_TAG ": LAN install refused, staging %s", content_name);
         notify_user(toast);
+        job_set(JOBP_STAGE, 0, 0);
 
         rc = stage_fetch(url, stage_path, content_name, &size);
         if (rc != 0)
@@ -1539,6 +1585,7 @@ staged_install(const char *url, const char *content_name,
                 unlink(stage_path);
                 goto out;
         }
+        job_set(JOBP_COPY, 0, lb->total);
         /* the console pulls the file from us now: serve until it has all of
          * it, or is clearly not coming back — and keep the user posted,
          * this phase is as long as the download was */
@@ -1564,6 +1611,7 @@ staged_install(const char *url, const char *content_name,
                             lb->total);
                         lb_reported = served;
                 }
+                job_set(JOBP_COPY, served, lb->total);
                 sleep(1);
         }
         if (!pulled && lb_served_bytes(lb) >= lb->total)
@@ -1577,17 +1625,28 @@ out:
 }
 
 /* returns 0 on success, SCE error code otherwise (negative codes are
- * ours: -1/-2 dlopen failures, STAGE_* from the staged fallback) */
+ * ours: -1/-2 dlopen failures, STAGE_* from the staged fallback).
+ * *final_out (may be NULL) says whether that outcome is definitive:
+ * sceAppInstUtilInstallByPackage only queues the download — when it
+ * accepts an http:// URL the console's downloader owns the job and
+ * never reports back, so a 0 from the direct path is an ACCEPT, not
+ * a finish (final 0). The staged fallback instead serves until the
+ * console has pulled the whole copy, so its 0 (and every non-zero
+ * rc) is definitive (final 1). */
 static int
 installer_install(const char *path, const char *want_name,
                   const char *want_icon,
-                  char *name_out, size_t name_sz)
+                  char *name_out, size_t name_sz, int *final_out)
 {
         char local[URL_MAX + 32];
         const char *uri = path;
         const char *base;
         int rc;
 
+        /* default: definitive (every failure below is a real outcome;
+         * only the direct accept path overrides this with 0) */
+        if (final_out)
+                *final_out = 1;
         if (!path || !*path)
                 return -1;
 
@@ -1624,51 +1683,162 @@ installer_install(const char *path, const char *want_name,
         if (rc)
                 return rc;
 
+        job_begin(path, name_out);
         rc = call_install_uri(uri, name_out,
             (want_icon && *want_icon) ? want_icon : "");
-        if (rc == 0)
+        if (rc == 0) {
+                /* the console took the job: its downloader fetches the
+                 * package after we return, and nothing tells us how that
+                 * ends — this is an accept, not an outcome */
+                if (final_out)
+                        *final_out = 0;
                 return 0;
+        }
         /* The console refused to fetch the package itself (issue #43:
          * 0x80B22404 on firmware that gates remote-URL installs). Pull it
          * over here and install it from a loopback copy instead. */
-        if (!strncmp(path, "http://", 7) && lan_route_refused(rc))
+        if (!strncmp(path, "http://", 7) && lan_route_refused(rc)) {
+                /* staged_install serves until the console has the whole
+                 * copy or has clearly given up, so whatever comes back
+                 * out of it is definitive */
+                if (final_out)
+                        *final_out = 1;
                 return staged_install(path, name_out,
                     (want_icon && *want_icon) ? want_icon : "");
+        }
+        /* refused by the console installer itself: definitive */
+        if (final_out)
+                *final_out = 1;
         return rc;
 }
 
 /* the last finished install, served by /api/status: an idle console
  * looks the same whether the install succeeded or failed, so the page
  * matches lastUrl against the install it queued and reads the outcome
- * from ok/name/err. */
+ * from ok/name/err. final separates a real outcome from a direct
+ * install the console merely accepted (the downloader owns the job
+ * after the call returns and never reports back, so that record can
+ * only ever be a progress note, never a verdict). */
 static pthread_mutex_t g_last_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_last_ok = 0;
+static int g_last_final = 0;
 static char g_last_url[512];
 static char g_last_name[128];
 static char g_last_err[256];
 
+/* the record is kept in memory for /api/status and mirrored to
+ * /data/homebrew: a receiver that is re-injected (or crashes, or loses
+ * power) mid-flight comes back with no memory of the install it ran,
+ * and a PC watching its queue then cannot tell a dead install from a
+ * finished one. The write lands in a temp file renamed into place, so
+ * a power cut can never leave a torn record behind. */
+#define LAST_INSTALL_FILE "/data/homebrew/.pkg-receiver-last-install"
+#define LAST_INSTALL_TMP  LAST_INSTALL_FILE ".tmp"
+
+/* g_last_lock must be held. */
 static void
-record_last_install(const char *url, int ok, const char *name,
+last_install_set_locked(const char *url, int ok, int final, const char *name,
     const char *err)
 {
-        pthread_mutex_lock(&g_last_lock);
         g_last_ok = ok;
+        g_last_final = final;
         snprintf(g_last_url, sizeof(g_last_url), "%s", url ? url : "");
         snprintf(g_last_name, sizeof(g_last_name), "%s", name ? name : "");
         snprintf(g_last_err, sizeof(g_last_err), "%s", err ? err : "");
+}
+
+static void
+record_last_install(const char *url, int ok, int final, const char *name,
+    const char *err)
+{
+        char eurl[1024], ename[256], eerr[512], line[2048];
+        int wrote;
+        size_t len;
+        FILE *f;
+
+        pthread_mutex_lock(&g_last_lock);
+        last_install_set_locked(url, ok, final, name, err);
+        pthread_mutex_unlock(&g_last_lock);
+
+        json_escape(url ? url : "", eurl, sizeof(eurl));
+        json_escape(name ? name : "", ename, sizeof(ename));
+        json_escape(err ? err : "", eerr, sizeof(eerr));
+        wrote = snprintf(line, sizeof(line),
+            "{\"ok\":%d,\"final\":%d,\"url\":\"%s\",\"name\":\"%s\",\"err\":\"%s\"}\n",
+            ok ? 1 : 0, final ? 1 : 0, eurl, ename, eerr);
+        if (wrote < 0 || (size_t)wrote >= sizeof(line))
+                return; /* would have been torn; keep the previous record */
+        len = (size_t)wrote;
+        f = fopen(LAST_INSTALL_TMP, "w");
+        if (!f)
+                return;
+        if (fwrite(line, 1, len, f) == len)
+                rename(LAST_INSTALL_TMP, LAST_INSTALL_FILE);
+        else
+                unlink(LAST_INSTALL_TMP);
+        fclose(f);
+}
+
+/* boot-time reload of the record persisted above. Best effort: a
+ * missing, unreadable or unparseable record leaves the receiver as it
+ * was, exactly as before this file existed. */
+void
+install_last_restore(void)
+{
+        char buf[2048], url[512], name[128], err[256];
+        long long ok = 0, final = 0;
+        size_t n;
+        FILE *f;
+
+        f = fopen(LAST_INSTALL_FILE, "r");
+        if (!f)
+                return;
+        n = fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+        if (n == 0)
+                return;
+        buf[n] = '\0';
+        if (!json_string(buf, "url", url, sizeof(url)) || !url[0])
+                return;
+        json_string(buf, "name", name, sizeof(name));
+        json_string(buf, "err", err, sizeof(err));
+        json_long(buf, "ok", &ok);
+        /* a record from an older payload has no "final": treat it as
+         * non-final so a restoring reader never mistakes an accepted
+         * install for a finished one */
+        json_long(buf, "final", &final);
+        pthread_mutex_lock(&g_last_lock);
+        last_install_set_locked(url, ok != 0, final != 0, name, err);
         pthread_mutex_unlock(&g_last_lock);
 }
 
 void
-install_last_result(int *ok, char *url, size_t url_sz, char *name,
-    size_t name_sz, char *err, size_t err_sz)
+install_last_result(int *ok, int *final, char *url, size_t url_sz,
+    char *name, size_t name_sz, char *err, size_t err_sz)
 {
         pthread_mutex_lock(&g_last_lock);
         *ok = g_last_ok;
+        *final = g_last_final;
         snprintf(url, url_sz, "%s", g_last_url);
         snprintf(name, name_sz, "%s", g_last_name);
         snprintf(err, err_sz, "%s", g_last_err);
         pthread_mutex_unlock(&g_last_lock);
+}
+
+/* live progress of the running install, for /api/status: phase 0 idle,
+ * JOBP_CONSOLE the console fetches the package itself, JOBP_STAGE we
+ * are staging it, JOBP_COPY the console is copying the staged one */
+void
+install_job_progress(int *phase, long long *got, long long *want,
+    char *name, size_t name_sz, char *url, size_t url_sz)
+{
+        pthread_mutex_lock(&g_job_lock);
+        *phase = g_job_phase;
+        *got = g_job_got;
+        *want = g_job_want;
+        snprintf(name, name_sz, "%s", g_job_name);
+        snprintf(url, url_sz, "%s", g_job_url);
+        pthread_mutex_unlock(&g_job_lock);
 }
 
 static void *
@@ -1678,12 +1848,13 @@ install_worker(void *arg)
         char name[256];
         char toast[352];
         char err[256];
-        int rc;
+        int rc, final = 1;
 
         __sync_fetch_and_add(&g_active_installs, 1);
         rc = installer_install(job->url,
             job->name[0] ? job->name : NULL,
-            job->icon[0] ? job->icon : NULL, name, sizeof(name));
+            job->icon[0] ? job->icon : NULL, name, sizeof(name), &final);
+        job_set(0, 0, 0);
 
         if (rc == 0) {
                 snprintf(toast, sizeof(toast), APP_TAG ": installing %s", name);
@@ -1693,7 +1864,7 @@ install_worker(void *arg)
                     install_err_text(rc, err, sizeof(err)));
         }
         notify_user(toast);
-        record_last_install(job->url, rc == 0, name, err);
+        record_last_install(job->url, rc == 0, final, name, err);
         __sync_fetch_and_sub(&g_active_installs, 1);
         /* release the duplicate guard so a retry can run */
         pthread_mutex_lock(&g_cur_lock);

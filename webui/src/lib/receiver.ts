@@ -275,9 +275,13 @@ export function useReceiver() {
 
   /* follow an install we queued (matched by its URL) until the console
    * reports an outcome. Returns the status reply that ended the watch:
-   * on newer payloads lastUrl/lastOk/lastErr carry the real result,
-   * on older ones the caller can only say "check the console". Returns
-   * null when the console stopped answering entirely. */
+   * on newer payloads lastUrl/lastOk/lastErr carry the real result —
+   * but only a FINAL record (lastFinal) is a verdict; a direct install
+   * the console merely accepted ends with the downloader owning the
+   * job, so the watch returns that accepted record instead and the
+   * caller says "watch the console". On older payloads the caller can
+   * only say "check the console". Returns null when the console
+   * stopped answering entirely. */
   const watchInstall = useCallback(
     async (
       url: string,
@@ -300,11 +304,18 @@ export function useReceiver() {
           progress?.(s);
           continue;
         }
-        /* our own outcome is on record — that is the verdict */
-        if (s.lastUrl === url) return s;
-        /* idle without our record: the worker may simply not be up
-         * yet; after ~10 s the record is too old to trust either way */
-        if (i >= 5) return s;
+        if (s.lastUrl !== url) {
+          /* idle without our record: the worker may simply not be up
+           * yet; after ~10 s the record is too old to trust either way */
+          if (i >= 5) return s;
+          continue;
+        }
+        /* our own outcome is on record: return it either way — a final
+         * record is the verdict, an accepted record only means the
+         * console's downloader took the job and the status will never
+         * change again, so watching longer is pointless. The caller
+         * tells the two apart via lastFinal. */
+        return s;
       }
       /* ~21 min and still busy: the install outlived the watch */
       return {
@@ -354,6 +365,19 @@ export function useReceiver() {
         });
         toast.error("Install failed", {
           description: (s.lastName || g.title) + why,
+        });
+        return;
+      }
+      if (s.lastUrl === u && s.lastOk === true && s.lastFinal !== true) {
+        /* the console accepted the install but its downloader now owns
+         * the job — nothing further will ever reach the receiver, so
+         * say so instead of claiming the game is installed */
+        setMsg({
+          text:
+            "The console is downloading " +
+            g.title +
+            ". Watch its notification area for the result.",
+          kind: "info",
         });
         return;
       }
@@ -429,6 +453,18 @@ export function useReceiver() {
             description: (s.lastName || list[i].title) + why,
           });
           return;
+        }
+        if (s.lastUrl === u && s.lastOk === true && s.lastFinal !== true) {
+          /* accepted, not finished: the console's downloader owns the
+           * job and queues it with the others — keep going, the
+           * notification area reports each result */
+          setMsg({
+            text:
+              "The console took over " +
+              list[i].title +
+              ". Its notification area reports the result.",
+            kind: "info",
+          });
         }
         done += list[i].size || 0;
         setQueue({ done, total });

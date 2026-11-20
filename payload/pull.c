@@ -34,6 +34,9 @@ static char g_pull_name[128];
 /* 0 = ok, 1 = skipped (same size present), -1 = error */
 #define PULL_SEGS 16
 #define PULL_CHUNK (1024 * 1024)
+/* a dropped or stalled connection is resumed from the bytes it already
+ * wrote (the PC speaks Range): first attempt plus three resumes */
+#define PULL_TRIES 4
 
 typedef struct pull_seg {
 	char host[256];
@@ -163,87 +166,115 @@ pull_send(int s, const char *b, size_t n)
 	return (ssize_t)off;
 }
 
-/* one range segment: own connection, own fd, writes [start, start+len) */
+/* one range segment: own connection, own fd, writes [start, start+len).
+ * A connection that drops or stalls mid-segment (a Wi-Fi hiccup, or a
+ * pause long enough for the PC's idle timeout to close it) is re-issued
+ * as a fresh Range for the bytes this segment is still missing; a
+ * segment only fails when its retries run out or our own disk does. */
 static void *
 pull_seg_worker(void *arg)
 {
 	pull_seg_t *sg = arg;
 	char req[URL_MAX + 256], hs[4096];
 	char *hb;
-	int s = -1, out = -1;
-	long long left;
+	int s = -1, out = -1, attempt;
+	long long done = 0;
 	ssize_t n;
 
 	sg->ok = 0;
-	s = pull_connect(sg->host, sg->portstr);
-	if (s < 0)
-		return NULL;
-	snprintf(req, sizeof(req),
-	    "GET %s HTTP/1.0\r\nHost: %s\r\n"
-	    "Range: bytes=%lld-%lld\r\nConnection: close\r\n\r\n",
-	    sg->get, sg->host, sg->start, sg->start + sg->len - 1);
-	if (pull_send(s, req, strlen(req)) < 0) {
-		close(s);
-		return NULL;
-	}
-	/* a 200 here means the server ignored our Range and would send
-	 * the whole file from byte 0 — writing it at this segment's
-	 * offset would corrupt the copy, so insist on 206 */
-	if (!pull_headers(s, hs, sizeof(hs)) || http_status(hs) != 206) {
-		close(s);
-		return NULL;
-	}
 	hb = malloc(PULL_CHUNK);
+	if (!hb)
+		return NULL;
 	out = open(sg->local, O_WRONLY);
-	if (!hb || out < 0) {
+	if (out < 0) {
 		free(hb);
-		if (out >= 0)
-			close(out);
-		close(s);
 		return NULL;
 	}
-	if (lseek(out, (off_t)sg->start, SEEK_SET) == (off_t)-1) {
-		free(hb);
-		close(out);
-		close(s);
-		return NULL;
-	}
-	left = sg->len;
-	while (left > 0 && !g_pull_cancel) {
-		size_t want = (size_t)(left < PULL_CHUNK ? left : PULL_CHUNK);
-		size_t got = 0;
+	for (attempt = 0; attempt < PULL_TRIES && done < sg->len; attempt++) {
+		int drop = 0;
 
-		while (g_pull_paused && !g_pull_cancel)
-			sleep(1);
 		if (g_pull_cancel)
 			break;
-		n = recv(s, hb, want, 0);
-		if (n < 0) {
-			if (errno == EINTR)
-				continue;
-			break;
+		if (attempt > 0)
+			sleep(1);
+		s = pull_connect(sg->host, sg->portstr);
+		if (s < 0) {
+			drop = 1;
+			continue;
 		}
-		if (n == 0)
-			break;
-		while (got < (size_t)n) {
-			ssize_t w = write(out, hb + got, (size_t)n - got);
+		snprintf(req, sizeof(req),
+		    "GET %s HTTP/1.0\r\nHost: %s\r\n"
+		    "Range: bytes=%lld-%lld\r\nConnection: close\r\n\r\n",
+		    sg->get, sg->host, sg->start + done,
+		    sg->start + sg->len - 1);
+		if (pull_send(s, req, strlen(req)) < 0) {
+			close(s);
+			s = -1;
+			drop = 1;
+			continue;
+		}
+		/* a 200 here means the server ignored our Range and would
+		 * send the whole file from byte 0 — writing it at this
+		 * segment's offset would corrupt the copy, so insist on
+		 * 206 on every (re)connect */
+		if (!pull_headers(s, hs, sizeof(hs)) || http_status(hs) != 206) {
+			close(s);
+			s = -1;
+			drop = 1;
+			continue;
+		}
+		if (lseek(out, (off_t)(sg->start + done), SEEK_SET) == (off_t)-1)
+			break; /* our side is broken: retrying cannot help */
+		drop = 0;
+		while (done < sg->len && !g_pull_cancel) {
+			size_t want = (size_t)(sg->len - done < PULL_CHUNK ?
+			    sg->len - done : PULL_CHUNK);
+			size_t got = 0;
 
-			if (w < 0) {
+			while (g_pull_paused && !g_pull_cancel)
+				sleep(1);
+			if (g_pull_cancel)
+				break;
+			n = recv(s, hb, want, 0);
+			if (n < 0) {
 				if (errno == EINTR)
 					continue;
+				drop = 1; /* stall or reset: resume later */
 				break;
 			}
-			got += (size_t)w;
+			if (n == 0) {
+				drop = 1; /* short body: server gave up */
+				break;
+			}
+			while (got < (size_t)n) {
+				ssize_t w = write(out, hb + got, (size_t)n - got);
+
+				if (w < 0) {
+					if (errno == EINTR)
+						continue;
+					break;
+				}
+				got += (size_t)w;
+			}
+			if (got != (size_t)n)
+				goto seg_done; /* disk failure: no retry */
+			done += n;
+			__sync_fetch_and_add(&g_pull_got, n);
 		}
-		if (got != (size_t)n)
-			break;
-		left -= n;
-		__sync_fetch_and_add(&g_pull_got, n);
+		if (s >= 0) {
+			close(s);
+			s = -1;
+		}
+		if (!drop)
+			break; /* finished, cancelled, or failed for good */
+		/* dropped mid-segment: the next attempt resumes it */
 	}
+seg_done:
+	if (s >= 0)
+		close(s);
 	free(hb);
 	close(out);
-	close(s);
-	sg->ok = (left == 0);
+	sg->ok = (done == sg->len);
 	return NULL;
 }
 
@@ -411,106 +442,131 @@ pull_download(const char *url, const char *local, int resume)
 		}
 		return 0;
 	}
-	/* ── small/unknown size: classic single stream ── */
-	s = pull_connect(host, portstr);
-	if (s < 0)
-		return -1;
-	if (base > 0)
-		snprintf(req, sizeof(req),
-		    "GET %s HTTP/1.0\r\nHost: %s\r\n"
-		    "Range: bytes=%lld-\r\nConnection: close\r\n\r\n",
-		    get, host, base);
-	else
-		snprintf(req, sizeof(req),
-		    "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
-		    get, host);
-	if (pull_send(s, req, strlen(req)) < 0) {
-		close(s);
-		return -1;
-	}
-	{
-		char hs[4096];
-
-		if (!pull_headers(s, hs, sizeof(hs)) ||
-		    (base > 0 && http_status(hs) != 206)) {
-			/* non-206 on a resume means the server ignored the
-			 * Range: appending the full body at `base` would
-			 * corrupt the file, so fail the copy instead */
-			close(s);
-			return -1;
-		}
-		/* the response we are actually streaming is the
-		 * authority on the size: a HEAD probe that disagrees
-		 * (an error page, a changed file) must not fail a
-		 * fully copied file at the got != want check below */
-		if (base > 0) {
-			/* resume: a 206's Content-Range carries the
-			 * total; without it, offset + remaining bytes */
-			long long t = pull_crange_total(hs);
-
-			if (t < 0) {
-				t = pull_clen(hs);
-				if (t >= 0)
-					t += base;
-			}
-			if (t >= 0)
-				want = t;
-		} else {
-			long long t = pull_clen(hs);
-
-			if (t >= 0)
-				want = t;
-		}
-	}
-	out = open(local, O_WRONLY | O_CREAT | (base ? 0 : O_TRUNC), 0644);
-	if (out < 0) {
-		close(s);
-		return -1;
-	}
-	if (base > 0 && lseek(out, (off_t)base, SEEK_SET) == (off_t)-1) {
-		close(s);
-		close(out);
-		return -1;
-	}
-	g_pull_want = want;
-	g_pull_got = base;
-	got = base;
-	/* heap, not stack: PULL_CHUNK would risk the worker thread's stack */
+	/* ── small/unknown size: classic single stream ──
+	 * Same resilience as the segments: a dropped or stalled
+	 * connection is re-issued as a fresh Range from the bytes this
+	 * run already wrote, up to PULL_TRIES attempts; the partial
+	 * stays on disk for a later retry if they run out. */
+	out = -1;
 	{
 		char *hb = malloc(PULL_CHUNK);
-		int done = 0;
+		int attempt, done = 0;
 
-		if (!hb) {
-			close(s);
-			close(out);
+		if (!hb)
 			return -1;
-		}
-		for (;;) {
-			while (g_pull_paused && !g_pull_cancel)
-				sleep(1);
+		for (attempt = 0; attempt < PULL_TRIES && !done; attempt++) {
+			char hs[4096];
+			int drop = 1;
+
 			if (g_pull_cancel)
 				break;
-			n = recv(s, hb, PULL_CHUNK, 0);
-			if (n < 0) {
-				if (errno == EINTR)
-					continue;
+			if (attempt > 0)
+				sleep(1);
+			s = pull_connect(host, portstr);
+			if (s < 0)
+				continue;
+			if (base + got > 0)
+				snprintf(req, sizeof(req),
+				    "GET %s HTTP/1.0\r\nHost: %s\r\n"
+				    "Range: bytes=%lld-\r\nConnection: close\r\n\r\n",
+				    get, host, base + got);
+			else
+				snprintf(req, sizeof(req),
+				    "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+				    get, host);
+			if (pull_send(s, req, strlen(req)) < 0) {
+				close(s);
+				s = -1;
+				continue;
+			}
+			if (!pull_headers(s, hs, sizeof(hs))) {
+				close(s);
+				s = -1;
+				continue;
+			}
+			if (base + got > 0 && http_status(hs) != 206) {
+				/* non-206 on a resume means the server
+				 * ignored the Range: appending the full
+				 * body at the resume point would corrupt
+				 * the file, so fail the copy instead */
+				close(s);
+				s = -1;
 				break;
 			}
-			if (n == 0) {
-				done = 1;
-				break;
+			/* the response we are actually streaming is the
+			 * authority on the size: a HEAD probe that
+			 * disagrees (an error page, a changed file) must
+			 * not fail a fully copied file at the got != want
+			 * check below */
+			if (base + got > 0) {
+				/* resume: a 206's Content-Range carries the
+				 * total; without it, offset + remaining */
+				long long t = pull_crange_total(hs);
+
+				if (t < 0) {
+					t = pull_clen(hs);
+					if (t >= 0)
+						t += base + got;
+				}
+				if (t >= 0)
+					want = t;
+			} else {
+				long long t = pull_clen(hs);
+
+				if (t >= 0)
+					want = t;
 			}
-			if (write(out, hb, (size_t)n) != n)
+			if (out < 0) {
+				out = open(local, O_WRONLY | O_CREAT,
+				    (base ? 0 : O_TRUNC), 0644);
+				if (out < 0) {
+					close(s);
+					s = -1;
+					break;
+				}
+				g_pull_want = want;
+				g_pull_got = base;
+			}
+			if (lseek(out, (off_t)(base + got), SEEK_SET) == (off_t)-1)
+				break; /* our side: retrying cannot help */
+			drop = 0;
+			for (;;) {
+				while (g_pull_paused && !g_pull_cancel)
+					sleep(1);
+				if (g_pull_cancel)
+					break;
+				n = recv(s, hb, PULL_CHUNK, 0);
+				if (n < 0) {
+					if (errno == EINTR)
+						continue;
+					drop = 1; /* stall or reset */
+					break;
+				}
+				if (n == 0) {
+					done = 1; /* server closed: body end */
+					break;
+				}
+				if (write(out, hb, (size_t)n) != n) {
+					drop = 0; /* disk failure: no retry */
+					break;
+				}
+				got += n;
+				__sync_fetch_and_add(&g_pull_got, n);
+			}
+			if (s >= 0) {
+				close(s);
+				s = -1;
+			}
+			if (!drop)
 				break;
-			got += n;
-			__sync_fetch_and_add(&g_pull_got, n);
+			/* dropped mid-body: the next attempt resumes it */
 		}
 		free(hb);
-		close(s);
-		close(out);
+		if (out >= 0)
+			close(out);
 		if (!done)
 			return -1;
-		if (want >= 0 && got != want)
+		if (want >= 0 && base + got != want)
 			return -1;
 		return 0;
 	}
